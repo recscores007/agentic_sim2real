@@ -1,0 +1,7 @@
+{
+  "success_rate": 0.60,
+  "peak_force_n": 65.0,
+  "pose_error_p95_m": 0.008,
+  "jam_rate": 0.10,
+  "source": "golden offline baseline for harness validation"
+}

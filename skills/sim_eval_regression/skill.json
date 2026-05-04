@@ -1,0 +1,19 @@
+{
+  "id": "sim_eval_regression",
+  "name": "Simulation Regression Evaluation",
+  "owner_agent": "critic_agent",
+  "description": "Compare candidate settings against baseline metrics before promotion.",
+  "implementation": "sim_eval_regression",
+  "depends_on": ["autoresearch_planner"],
+  "inputs": ["baseline_metrics", "candidate_metrics"],
+  "outputs": ["sim_eval_regression.json", "result.json"],
+  "validators": [
+    "candidate peak force must be below configured limit",
+    "candidate pose p95 error must be below configured gate",
+    "baseline and candidate metrics must be recorded in evidence"
+  ],
+  "quality_gate": {"min_score": 0.7},
+  "human_required": false,
+  "release_blocking": true,
+  "real_robot": false
+}

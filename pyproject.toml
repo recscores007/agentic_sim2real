@@ -7,7 +7,7 @@ name = "ur-gear-agentic"
 version = "0.1.0"
 description = "Agentic sim2real helper for the Isaac Lab UR10e gear assembly tutorial."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [{ name = "Codex" }]
 dependencies = []
 

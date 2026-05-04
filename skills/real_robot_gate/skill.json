@@ -1,0 +1,19 @@
+{
+  "id": "real_robot_gate",
+  "name": "Real Robot Human Gate",
+  "owner_agent": "safety_agent",
+  "description": "Require explicit human approval before any UR robot command is allowed.",
+  "implementation": "real_robot_gate",
+  "depends_on": ["release_candidate_gate"],
+  "inputs": ["human_approval_env"],
+  "outputs": ["real_robot_gate.json", "result.json"],
+  "validators": [
+    "I_ACCEPT_UR_REAL_ROBOT_RISK must equal yes",
+    "safe_to_autorun_robot must remain false",
+    "this skill is skipped by default harness unless --include-real is set"
+  ],
+  "quality_gate": {"min_score": 1.0},
+  "human_required": true,
+  "release_blocking": true,
+  "real_robot": true
+}

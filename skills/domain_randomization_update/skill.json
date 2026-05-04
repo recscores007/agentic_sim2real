@@ -1,0 +1,19 @@
+{
+  "id": "domain_randomization_update",
+  "name": "Domain Randomization Candidate",
+  "owner_agent": "dr_agent",
+  "description": "Convert measured sim-real gaps into bounded domain-randomization candidate updates.",
+  "implementation": "domain_randomization_update",
+  "depends_on": ["sysid_step_response"],
+  "inputs": ["gap_estimates"],
+  "outputs": ["domain_randomization_candidate.json", "result.json"],
+  "validators": [
+    "shaft pose noise recommendation must stay within 1 cm unless human override is added",
+    "friction sweep must stay positive and conservative",
+    "tutorial default randomization families must remain present"
+  ],
+  "quality_gate": {"min_score": 0.8},
+  "human_required": false,
+  "release_blocking": true,
+  "real_robot": false
+}

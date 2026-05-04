@@ -1,0 +1,7 @@
+{
+  "checkpoint_placeholder": true,
+  "task": "Isaac-Deploy-GearAssembly-UR10e-2F140-v0",
+  "action_dim": 6,
+  "observation_terms": ["joint_pos", "joint_vel", "gear_shaft_pos", "gear_shaft_quat"],
+  "note": "This metadata stands in for a real .pt checkpoint during offline harness validation."
+}

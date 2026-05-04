@@ -1,0 +1,20 @@
+{
+  "id": "sysid_step_response",
+  "name": "UR10e SysID Step Response",
+  "owner_agent": "sysid_agent",
+  "description": "Estimate delay, stiction/deadband proxy, contact force, and SysID targets from real logs.",
+  "implementation": "sysid_step_response",
+  "depends_on": ["pose_repeatability"],
+  "inputs": ["dataset_jsonl", "config"],
+  "outputs": ["gap_estimates.json", "result.json"],
+  "validators": [
+    "minimum configured episode count must be present",
+    "delay estimate must be emitted",
+    "stiction/deadband proxy must be emitted",
+    "contact summary must be emitted"
+  ],
+  "quality_gate": {"min_score": 0.6},
+  "human_required": true,
+  "release_blocking": true,
+  "real_robot": false
+}

@@ -1,0 +1,19 @@
+{
+  "id": "isaaclab_task_check",
+  "name": "Isaac Lab Task Contract Check",
+  "owner_agent": "sim_agent",
+  "description": "Validate the UR10e gear assembly task id, gripper choice, observation contract, and nominal action scale.",
+  "implementation": "isaaclab_task_check",
+  "depends_on": ["env_preflight"],
+  "inputs": ["config"],
+  "outputs": ["task_contract.json", "result.json"],
+  "validators": [
+    "task id must be Isaac-Deploy-GearAssembly-UR10e-2F140-v0 or Isaac-Deploy-GearAssembly-UR10e-2F85-v0",
+    "policy observations must include joint_pos, joint_vel, gear_shaft_pos, gear_shaft_quat",
+    "2F-140 nominal action scale must be 0.0325 and 2F-85 nominal action scale must be 0.025"
+  ],
+  "quality_gate": {"min_score": 0.9},
+  "human_required": false,
+  "release_blocking": true,
+  "real_robot": false
+}

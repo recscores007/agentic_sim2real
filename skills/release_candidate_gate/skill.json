@@ -1,0 +1,19 @@
+{
+  "id": "release_candidate_gate",
+  "name": "Release Candidate Gate",
+  "owner_agent": "safety_agent",
+  "description": "Aggregate skill results and block promotion if any release-blocking skill failed.",
+  "implementation": "release_candidate_gate",
+  "depends_on": ["policy_artifact_audit", "sim_eval_regression"],
+  "inputs": ["skill_results"],
+  "outputs": ["release_gate_review.json", "result.json"],
+  "validators": [
+    "all release-blocking skills must pass",
+    "safe_to_autorun_robot must always be false",
+    "human approvals must be listed for hardware-facing skills"
+  ],
+  "quality_gate": {"min_score": 0.9},
+  "human_required": true,
+  "release_blocking": true,
+  "real_robot": false
+}

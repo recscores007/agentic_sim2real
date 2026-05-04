@@ -8,6 +8,7 @@ from pathlib import Path
 from ur_agentic.cli import main
 from ur_agentic.config import choose_task, load_config, nominal_action_scale
 from ur_agentic.dataset import load_records
+from ur_agentic.skill_harness import run_harness, validate_all_manifests
 from ur_agentic.sysid import estimate_gap
 
 
@@ -56,6 +57,23 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue(report.exists())
             self.assertTrue(params.exists())
             self.assertIn("score_0_to_1", json.loads(score.read_text()))
+
+    def test_skill_manifests_validate(self) -> None:
+        result = validate_all_manifests(ROOT)
+        self.assertEqual(result["status"], "pass")
+        self.assertIn("autoresearch_planner", result["skills"])
+
+    def test_harness_writes_scoreboard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            scoreboard = run_harness(
+                root=ROOT,
+                config_path=ROOT / "configs" / "ur10e_gear_assembly.example.json",
+                dataset_path=ROOT / "sample_data" / "real_log_demo.jsonl",
+                out_dir=tmp,
+            )
+            self.assertEqual(scoreboard["status"], "pass")
+            self.assertIn("release_candidate_gate", scoreboard["skills"])
+            self.assertTrue((Path(tmp) / "scoreboard.json").exists())
 
 
 if __name__ == "__main__":

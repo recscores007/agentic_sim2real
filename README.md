@@ -1,108 +1,148 @@
-# UR10e Gear Assembly Agentic Sim2Real
+# UR10e Gear Assembly Agentic Skills
 
-This repo is a UR arm version of the Isaac Lab gear assembly tutorial, with an
-offline agent layer added for SysID, domain-randomization tuning, and
-AutoResearch experiment planning.
+This repo turns the Isaac Lab / Isaac ROS UR10e gear assembly tutorial into an
+agentic, skill-based sim2real pipeline.
 
-It targets:
+The important change is this:
+
+```text
+tutorial step -> atomic skill -> agent runs skill -> harness validates skill -> release gate
+```
+
+Every skill has a manifest, input/output contract, validators, quality score,
+evidence files, and release-blocking flag. AutoResearch proposes improvements,
+but the validation harness decides whether they are good enough to release.
+
+Real robot motion is never automatic. It remains human-gated.
+
+## What This Targets
 
 - UR10e arm
 - Robotiq 2F-140 gripper by default, with 2F-85 supported by config
 - Isaac Lab task `Isaac-Deploy-GearAssembly-UR10e-2F140-v0`
-- FoundationPose + RealSense shaft-pose observations
 - Isaac ROS Manipulation gear assembly workflow with cuMotion
+- FoundationPose + RealSense shaft pose observations
+- Offline SysID, domain randomization tuning, AutoResearch planning, and release validation
 
-The repo does not move the robot by itself. Real robot commands are blocked by a
-human gate.
+Sources double checked:
 
-## Sources Double Checked
-
-- Isaac Lab gear assembly policy tutorial:
+- Isaac Lab gear assembly tutorial:
   https://isaac-sim.github.io/IsaacLab/main/source/policy_deployment/02_gear_assembly/gear_assembly_policy.html
 - Isaac ROS gear assembly deployment tutorial:
   https://nvidia-isaac-ros.github.io/reference_workflows/isaac_for_manipulation/tutorials/sim_to_real/tutorial_gear_assembly.html
 
-Key facts used here:
+Tutorial facts encoded in the skill contracts:
 
-- Training task: `Isaac-Deploy-GearAssembly-UR10e-2F140-v0`
-- 2F-85 task: `Isaac-Deploy-GearAssembly-UR10e-2F85-v0`
 - Policy observations: `joint_pos`, `joint_vel`, `gear_shaft_pos`, `gear_shaft_quat`
 - Shaft pose source: FoundationPose + RealSense depth
-- Tutorial training noise: `gear_shaft_pos` +/- 0.005 m and `gear_shaft_quat` +/- 0.01 per component
-- Tutorial deployment rate: 30 Hz
-- Tutorial 2F-140 action scale: 0.0325; 2F-85 default: 0.025
-- Full training command uses `--headless --num_envs 256 --video --video_length 800 --video_interval 5000`
-- Real robot pose/calibration should be under 1 cm error before insertion
-
-## Current Tutorial Process vs Agentic Process
-
-| Area | Current tutorial method | Agentic version in this repo |
-| --- | --- | --- |
-| Physics tuning | Human visual comparison of real vs sim videos | Agent estimates delay, stiction proxy, contact spikes, and proposes parameter sweeps |
-| Pose noise | Fixed training noise from expected FoundationPose/RealSense error | Agent fits shaft-pose noise from repeatability logs and flags if it exceeds the 1 cm gate |
-| Domain randomization | Tutorial ranges are chosen up front | Agent keeps tutorial defaults, then recommends tighten/widen changes from real logs |
-| Action scale | Manual gripper-specific value, 0.025 or 0.0325 | Agent checks whether stiction needs a larger scale or contact force requires a smaller one |
-| SysID | Human-guided step response and inspection | Agent turns step/log data into stiffness, damping, friction, delay, and action-scale candidates |
-| AutoResearch | Not part of the tutorial | Agent ranks experiments E1-E4 and writes an experiment plan before any real run |
-| Human role | High throughout | Still required for calibration, labels, approvals, and all real robot motion |
-| Time target | Often several weeks if done manually | One-week loop: train, calibrate, collect small logs, run agent, retry best experiment |
-
-## What The Agent Does
-
-The agent is offline and evidence-driven:
-
-1. Reads real logs from JSONL/JSON/CSV.
-2. Estimates control rate, action/state delay, stiction/deadband proxy, pose noise, contact force risk, and reset scatter.
-3. Produces:
-   - `gap_estimates.json`
-   - `autoresearch_plan.json`
-   - `agentic_params.yaml`
-   - `transfer_score.json`
-   - `report.md`
-4. Suggests which Isaac Lab/Isaac ROS parameters to tune.
-5. Keeps real robot deployment behind a human gate.
-
-Human inputs still required:
-
-- UR calibration file path
-- hand-eye/camera calibration validation result
-- gripper type
-- policy checkpoint path plus `agent.yaml` and `env.yaml`
-- gear model and asset paths
-- pose-estimation repeatability samples
-- run labels: success, slip, jam, pose miss, camera dropout, calibration issue
-- explicit approval before real robot motion
+- Training noise: `gear_shaft_pos` +/- 0.005 m, `gear_shaft_quat` +/- 0.01/component
+- Deployment rate: 30 Hz
+- 2F-140 action scale: 0.0325
+- 2F-85 action scale: 0.025
+- Real pose/calibration gate: under 1 cm error before insertion
 
 ## Repo Map
 
 ```text
-configs/ur10e_gear_assembly.example.json
-sample_data/real_log_demo.jsonl
-scripts/
-  _env.sh
-  print_tutorial_commands.sh
-  isaaclab_train.sh
-  isaaclab_play.sh
-  ros_preflight.sh
-  collect_real_logs.sh
-  run_agentic_pipeline.sh
-  real_robot_human_gate.sh
-  isaac_ros_launch_gear.sh
+skills/                         Atomic skill contracts
+  env_preflight/skill.json
+  isaaclab_task_check/skill.json
+  policy_artifact_audit/skill.json
+  ros_preflight/skill.json
+  pose_repeatability/skill.json
+  sysid_step_response/skill.json
+  domain_randomization_update/skill.json
+  action_scale_sweep/skill.json
+  autoresearch_planner/skill.json
+  sim_eval_regression/skill.json
+  release_candidate_gate/skill.json
+  real_robot_gate/skill.json
+
 ur_agentic/
-  cli.py
-  config.py
-  dataset.py
-  metrics.py
-  sysid.py
-  autoresearch.py
-  report.py
-  safety.py
-tests/test_pipeline.py
+  skill_harness.py              Skill runner, validators, scoreboard, release gate
+  autoresearch.py               Experiment planner
+  sysid.py                      Sim-real gap and SysID recommendations
+  metrics.py                    Delay, stiction, pose, contact metrics
+  cli.py                        Command-line entrypoint
+
+scripts/
+  run_skill_harness.sh          Default validation harness
+  run_autoresearch_loop.sh      Harness plus AutoResearch evidence path
+  isaaclab_train.sh             Tutorial training wrapper
+  ros_preflight.sh              ROS validation helper
+  real_robot_human_gate.sh      Human-gated action sender
+
+golden/sample_inputs/           Golden validation fixtures
+sample_data/real_log_demo.jsonl Sample real-log schema
+agents/README.md                Agent responsibilities
+harness/README.md               Harness design
 ```
 
-## Step By Step
+## Atomic Skills
 
-### 0. Clone and install
+| Skill | Agent | Purpose | Release Blocking |
+| --- | --- | --- | --- |
+| `env_preflight` | `orchestrator_agent` | Check local tools and environment | Yes |
+| `isaaclab_task_check` | `sim_agent` | Validate task id, observations, gripper, action scale | Yes |
+| `policy_artifact_audit` | `sim_agent` | Check `agent.yaml`, `env.yaml`, checkpoint metadata | Yes |
+| `ros_preflight` | `orchestrator_agent` | Check ROS gear workflow config | Yes |
+| `pose_repeatability` | `perception_agent` | Validate shaft pose error under 1 cm | Yes |
+| `sysid_step_response` | `sysid_agent` | Estimate delay, stiction, contact, SysID targets | Yes |
+| `domain_randomization_update` | `dr_agent` | Propose bounded DR updates | Yes |
+| `action_scale_sweep` | `sysid_agent` | Propose safe action-scale candidates | Yes |
+| `autoresearch_planner` | `autoresearch_agent` | Generate and rank experiments | Yes |
+| `sim_eval_regression` | `critic_agent` | Compare candidate vs baseline | Yes |
+| `release_candidate_gate` | `safety_agent` | Aggregate evidence and block weak releases | Yes |
+| `real_robot_gate` | `safety_agent` | Require human approval before hardware command | Yes, skipped by default |
+
+Each skill writes:
+
+```json
+{
+  "skill_id": "pose_repeatability",
+  "status": "pass",
+  "quality_score": 0.95,
+  "confidence": 0.75,
+  "blocking_failures": [],
+  "warnings": [],
+  "evidence_files": ["outputs/harness_demo/skills/pose_repeatability/pose_repeatability.json"]
+}
+```
+
+## How AutoResearch Is Used
+
+AutoResearch is the experiment designer and self-improvement loop. It does not
+move the robot.
+
+```text
+real logs
+  -> skill metrics
+  -> AutoResearch hypotheses
+  -> candidate parameter changes
+  -> validation harness
+  -> critic regression
+  -> release gate
+  -> human review
+```
+
+For this task, AutoResearch focuses on:
+
+- perception noise around `gear_shaft_pos` and `gear_shaft_quat`
+- UR10e stiffness, damping, friction, stiction, and delay
+- base/gear pose randomization coverage
+- action scale vs contact force
+- sim regression before any hardware run
+
+Promotion rule:
+
+```text
+AutoResearch may promote a candidate only to human review.
+It never promotes directly to unattended robot execution.
+```
+
+## Step By Step: Local Skill Harness
+
+### 1. Clone and install
 
 ```bash
 git clone https://github.com/recscores007/so101.git
@@ -115,13 +155,104 @@ export UR_GEAR_CONFIG=$PWD/configs/ur10e_gear_assembly.local.json
 Edit `configs/ur10e_gear_assembly.local.json` for your Isaac Lab root, Isaac
 ROS workspace, gripper type, `ROS_DOMAIN_ID`, and manipulator config path.
 
+### 2. List the skills
+
+```bash
+ur-gear-agentic --config "$UR_GEAR_CONFIG" list-skills
+```
+
+### 3. Validate every skill manifest
+
+```bash
+ur-gear-agentic --config "$UR_GEAR_CONFIG" validate-skills --root .
+```
+
+This checks that every skill has:
+
+- id
+- owner agent
+- input contract
+- output contract
+- validators
+- quality gate
+- human/release flags
+
+### 4. Run the full offline harness
+
+```bash
+./scripts/run_skill_harness.sh
+```
+
+Equivalent CLI:
+
+```bash
+ur-gear-agentic --config "$UR_GEAR_CONFIG" run-harness \
+  --root . \
+  --dataset sample_data/real_log_demo.jsonl \
+  --out outputs/harness_demo
+```
+
+Expected outputs:
+
+```text
+outputs/harness_demo/
+  scoreboard.json
+  release_candidate.json
+  skills/<skill_id>/result.json
+```
+
+The default harness skips `real_robot_gate`, because hardware requires human
+approval.
+
+### 5. Inspect the scoreboard
+
+```bash
+cat outputs/harness_demo/scoreboard.json
+```
+
+Release status is pass only if every release-blocking offline skill passes.
+
+### 6. Run only one skill
+
+```bash
+ur-gear-agentic --config "$UR_GEAR_CONFIG" run-harness \
+  --root . \
+  --dataset sample_data/real_log_demo.jsonl \
+  --out outputs/pose_only \
+  --skill pose_repeatability
+```
+
+Use this while developing or debugging one skill.
+
+### 7. Run AutoResearch loop
+
+```bash
+./scripts/run_autoresearch_loop.sh
+```
+
+Key output:
+
+```text
+outputs/autoresearch_demo/skills/autoresearch_planner/autoresearch_plan.json
+```
+
+The plan contains:
+
+- hypothesis
+- agent action
+- human action
+- parameter change
+- promotion rule
+
+## Step By Step: Tutorial Training
+
 ### 1. Print tutorial commands
 
 ```bash
 ./scripts/print_tutorial_commands.sh
 ```
 
-### 2. Visualize the Isaac Lab environment
+### 2. Visualize the Isaac Lab task
 
 ```bash
 ./scripts/isaaclab_train.sh visualize
@@ -135,8 +266,6 @@ python scripts/reinforcement_learning/rsl_rl/train.py \
   --task Isaac-Deploy-GearAssembly-UR10e-2F140-v0 \
   --num_envs 4
 ```
-
-For the Robotiq 2F-85 gripper, set `robot.gripper_type` to `robotiq_2f_85`.
 
 ### 3. Train the policy
 
@@ -155,32 +284,32 @@ python scripts/reinforcement_learning/rsl_rl/train.py \
   --video --video_length 800 --video_interval 5000
 ```
 
-Training is expected to take about 12-24 hours for a robust insertion policy.
+For Robotiq 2F-85, set `robot.gripper_type` to `robotiq_2f_85` in the config.
 
-### 4. Configure Isaac ROS for gear assembly
+### 4. Replace golden policy artifacts
 
-In the Isaac ROS Manipulation config:
+After training, copy your real Isaac Lab outputs into your release artifact
+folder:
 
-- set `workflow_type` to `GEAR_ASSEMBLY`
-- set `gear_assembly_model_path`
-- set `gear_assembly_model_file_name`
-- set `gripper_type`
-- set `setup`
-- set `moveit_collision_objects_scene_file`
-- set `cumotion_urdf_file_path`
-- set `cumotion_xrdf_file_path`
-- set `ur_calibration_file_path`
-- set `gear_assembly_model_frequency` to 30 Hz
-- set `gear_assembly_offset_for_place_pose` to 0.34 for 2F-140 or 0.32 for 2F-85
-- for 2F-140, set `action_scale_joint_space` values to 0.0325
+```text
+agent.yaml
+env.yaml
+checkpoint metadata or pointer to model checkpoint
+```
 
-### 5. Run real-robot preflight, without moving the robot
+The harness currently uses `golden/sample_inputs/policy_artifacts/` for offline
+validation. For a real release, point the policy audit skill to your real
+artifact bundle or replace the golden sample with your release candidate.
+
+## Step By Step: Real Data And SysID
+
+### 1. Run ROS preflight
 
 ```bash
 ./scripts/ros_preflight.sh
 ```
 
-Run the tutorial's manual-on-robot validation tests before full deployment:
+Before insertion, run the tutorial's manual-on-robot validation:
 
 ```bash
 export ENABLE_MANIPULATOR_TESTING=manual_on_robot
@@ -188,15 +317,15 @@ launch_test $(ros2 pkg prefix --share isaac_ros_manipulation_bringup)/test/test_
 bash ${ISAAC_ROS_WS}/src/isaac_ros_manipulation/isaac_ros_manipulation_bringup/test/compare_pose_estimation_results.sh
 ```
 
-Do not proceed if pose error is above 1 cm.
+Do not continue if pose error is above 1 cm.
 
-### 6. Collect a real log packet
+### 2. Record real observations
 
 ```bash
 ./scripts/collect_real_logs.sh rosbags/ur_gear_day1
 ```
 
-Convert the observations you need into JSONL with this schema:
+Convert your observations into JSONL like:
 
 ```json
 {
@@ -212,36 +341,40 @@ Convert the observations you need into JSONL with this schema:
 }
 ```
 
-### 7. Run the offline agent
+### 3. Run the harness on real logs
 
 ```bash
-./scripts/run_agentic_pipeline.sh \
-  --dataset ./sample_data/real_log_demo.jsonl \
-  --out ./outputs/demo
+DATASET=/path/to/your_real_logs.jsonl \
+OUT=outputs/real_day1 \
+./scripts/run_skill_harness.sh
 ```
 
-Installed CLI equivalent:
+Review:
 
-```bash
-ur-gear-agentic --config configs/ur10e_gear_assembly.local.json analyze \
-  --dataset ./sample_data/real_log_demo.jsonl \
-  --out ./outputs/demo
+```text
+outputs/real_day1/scoreboard.json
+outputs/real_day1/release_candidate.json
+outputs/real_day1/skills/sysid_step_response/gap_estimates.json
+outputs/real_day1/skills/autoresearch_planner/autoresearch_plan.json
 ```
 
-Read `outputs/demo/report.md` and `outputs/demo/autoresearch_plan.json`.
+## Step By Step: Release Gate
 
-### 8. Use AutoResearch to improve sim2real
+The release gate passes only when these are true:
 
-Run these in order:
+- all manifests are valid
+- every release-blocking offline skill passes
+- pose p95 error is under 1 cm
+- SysID evidence exists
+- DR updates stay bounded
+- action-scale candidate stays within contact-force limits
+- sim regression evidence is present
+- `safe_to_autorun_robot` is false
+- human approval is still required
 
-1. `E1_perception_noise_replay`: tune `gear_shaft_pos` and `gear_shaft_quat` noise from pose-repeatability logs.
-2. `E2_ur10e_sysid_step_response`: tune stiffness, damping, friction, delay, and action scale from UR response logs.
-3. `E3_reset_and_fixture_generalization`: compare real fixture scatter to tutorial base/gear pose randomization.
-4. `E4_contact_action_scale_gate`: test whether the action scale overcomes stiction without causing force spikes.
+If any blocking validator fails, the release candidate is blocked.
 
-Only promote the best candidate to real robot evaluation.
-
-### 9. Launch the workflow only after the human gate
+## Step By Step: Human-Gated Robot Run
 
 Checklist:
 
@@ -249,18 +382,19 @@ Checklist:
 - Robotiq Tool I/O set to User
 - workspace clear
 - emergency stop tested
-- calibration and pose-estimation validation passed
-- cuMotion ready
+- calibration validation passed
+- pose repeatability passed
+- cuMotion reports ready
 - human standing by
 
-Then:
+Terminal 1:
 
 ```bash
 export I_ACCEPT_UR_REAL_ROBOT_RISK=yes
 ./scripts/isaac_ros_launch_gear.sh
 ```
 
-In a second terminal, after `cuMotion is ready for planning queries!`:
+Terminal 2, after `cuMotion is ready for planning queries!`:
 
 ```bash
 export I_ACCEPT_UR_REAL_ROBOT_RISK=yes
@@ -270,26 +404,26 @@ export I_ACCEPT_UR_REAL_ROBOT_RISK=yes
 The tutorial then prompts the human to click the peg stand and gear in
 `rqt_image_view`.
 
-## Domain Randomization In This Tutorial
+## Domain Randomization Covered
 
-The tutorial uses three major randomization families:
-
-| Family | What it means | Tutorial values |
+| Family | Meaning | Tutorial Defaults |
 | --- | --- | --- |
 | Shaft pose observation noise | How perception sees the shaft | `gear_shaft_pos` +/- 0.005 m, `gear_shaft_quat` +/- 0.01/component |
-| Base and gear pose randomization | Where the fixture and gear start in simulation | base x +/- 10 cm, y +/- 25 cm, z +/- 10 cm, roll/pitch +/- 2 deg, yaw +/- 30 deg; gear xy +/- 2 cm, z 5.75-7.75 cm, rpy +/- 5 deg |
-| Actuator/contact randomization | How the UR arm and contacts respond | stiffness scale 0.75-1.5, damping scale 0.3-3.0, joint friction add 0.3-0.7 Nm, nominal friction 0.75, restitution 0 |
+| Base and gear pose randomization | Where fixture and gear start in sim | base x +/- 10 cm, y +/- 25 cm, z +/- 10 cm, roll/pitch +/- 2 deg, yaw +/- 30 deg |
+| Gear relative pose | Gear start relative to base | xy +/- 2 cm, z 5.75-7.75 cm, rpy +/- 5 deg |
+| Actuator/contact | How the UR and contact respond | stiffness 0.75-1.5, damping 0.3-3.0, joint friction add 0.3-0.7 Nm, friction 0.75 |
 
-The agent does not replace these. It measures whether the real setup is inside
-these ranges and proposes focused changes when it is not.
+The agent measures whether your real setup is inside these assumptions and
+proposes bounded updates when it is not.
 
-## Safety Boundary
-
-`check-real-gate` fails unless this exact environment variable is set:
+## Developer Checks
 
 ```bash
-export I_ACCEPT_UR_REAL_ROBOT_RISK=yes
+PYTHONPYCACHEPREFIX=/tmp/ur_pycache python3 -m py_compile ur_agentic/*.py tests/test_pipeline.py
+PYTHONPATH=. python3 -m unittest discover -s tests
+PYTHONPATH=. python3 -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json validate-skills --root .
+PYTHONPATH=. python3 -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json run-harness --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/ur_harness
+bash -n scripts/*.sh
 ```
 
-That is intentional. Agentic sim2real should improve the experiments, not hide
-the fact that a human still owns hardware safety.
+CI runs these checks on GitHub.

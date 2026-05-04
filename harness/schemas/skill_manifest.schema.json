@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UR Gear Atomic Skill Manifest",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "owner_agent",
+    "description",
+    "implementation",
+    "inputs",
+    "outputs",
+    "validators",
+    "quality_gate",
+    "human_required",
+    "release_blocking",
+    "real_robot"
+  ],
+  "properties": {
+    "id": {"type": "string"},
+    "name": {"type": "string"},
+    "owner_agent": {"type": "string"},
+    "description": {"type": "string"},
+    "implementation": {"type": "string"},
+    "depends_on": {"type": "array", "items": {"type": "string"}},
+    "inputs": {"type": "array", "items": {"type": "string"}},
+    "outputs": {"type": "array", "items": {"type": "string"}},
+    "validators": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "quality_gate": {
+      "type": "object",
+      "required": ["min_score"],
+      "properties": {
+        "min_score": {"type": "number", "minimum": 0.0, "maximum": 1.0}
+      }
+    },
+    "human_required": {"type": "boolean"},
+    "release_blocking": {"type": "boolean"},
+    "real_robot": {"type": "boolean"}
+  }
+}

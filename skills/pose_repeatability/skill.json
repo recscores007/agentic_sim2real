@@ -1,0 +1,19 @@
+{
+  "id": "pose_repeatability",
+  "name": "Shaft Pose Repeatability",
+  "owner_agent": "perception_agent",
+  "description": "Validate FoundationPose/RealSense shaft pose repeatability against the 1 cm real-robot gate.",
+  "implementation": "pose_repeatability",
+  "depends_on": ["ros_preflight"],
+  "inputs": ["dataset_jsonl"],
+  "outputs": ["pose_repeatability.json", "result.json"],
+  "validators": [
+    "position_error_p95_m must be <= 0.01",
+    "at least 10 shaft pose samples are required",
+    "orientation error must be reported when quaternions are present"
+  ],
+  "quality_gate": {"min_score": 0.7},
+  "human_required": true,
+  "release_blocking": true,
+  "real_robot": false
+}

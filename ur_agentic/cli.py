@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import sys
+from pathlib import Path
 
 from .autoresearch import build_plan
 from .config import PipelineConfig, choose_task, command_env, load_config
 from .dataset import load_records
 from .report import write_outputs
 from .safety import require_real_robot_gate
+from .skill_harness import load_manifests, run_harness, validate_all_manifests
 from .sysid import estimate_gap
 
 
@@ -19,10 +22,21 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("preflight", help="Check local command availability")
     sub.add_parser("commands", help="Print tutorial-aligned Isaac Lab and Isaac ROS commands")
+    sub.add_parser("list-skills", help="List atomic skills and owning agents")
+
+    validate_skills = sub.add_parser("validate-skills", help="Validate every skill manifest")
+    validate_skills.add_argument("--root", default=".")
 
     analyze = sub.add_parser("analyze", help="Analyze recorded real logs offline")
     analyze.add_argument("--dataset", required=True)
     analyze.add_argument("--out", required=True)
+
+    harness = sub.add_parser("run-harness", help="Run the skill validation harness")
+    harness.add_argument("--root", default=".")
+    harness.add_argument("--dataset", default="sample_data/real_log_demo.jsonl")
+    harness.add_argument("--out", required=True)
+    harness.add_argument("--skill", default=None, help="Run one skill by id")
+    harness.add_argument("--include-real", action="store_true", help="Include real-robot skills after human approval")
 
     sub.add_parser("check-real-gate", help="Fail unless the real-robot human gate env var is set")
 
@@ -33,8 +47,14 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_preflight(config)
     if args.cmd == "commands":
         return cmd_commands(config)
+    if args.cmd == "list-skills":
+        return cmd_list_skills(Path("."))
+    if args.cmd == "validate-skills":
+        return cmd_validate_skills(args.root)
     if args.cmd == "analyze":
         return cmd_analyze(config, args.dataset, args.out)
+    if args.cmd == "run-harness":
+        return cmd_run_harness(args.root, args.config, args.dataset, args.out, args.include_real, args.skill)
     if args.cmd == "check-real-gate":
         require_real_robot_gate(config)
         print("Human gate env var present. Continue only with active supervision.")
@@ -95,6 +115,40 @@ def cmd_analyze(config: PipelineConfig, dataset_path: str, out_dir: str) -> int:
         print(f"- {name}: {path}")
     print(f"Transfer score: {plan['transfer_score']['score_0_to_1']} ({plan['transfer_score']['interpretation']})")
     return 0
+
+
+def cmd_list_skills(root: Path) -> int:
+    manifests = load_manifests(root)
+    for manifest in manifests:
+        data = manifest.data
+        print(f"{data['id']}: {data['owner_agent']} - {data['name']}")
+    return 0
+
+
+def cmd_validate_skills(root: str) -> int:
+    result = validate_all_manifests(root)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0 if result["status"] == "pass" else 1
+
+
+def cmd_run_harness(
+    root: str,
+    config_path: str,
+    dataset_path: str,
+    out_dir: str,
+    include_real: bool,
+    only_skill: str | None,
+) -> int:
+    scoreboard = run_harness(
+        root=root,
+        config_path=config_path,
+        dataset_path=dataset_path,
+        out_dir=out_dir,
+        include_real=include_real,
+        only_skill=only_skill,
+    )
+    print(json.dumps(scoreboard, indent=2, sort_keys=True))
+    return 0 if scoreboard["status"] == "pass" else 1
 
 
 def _shell_quote(value: str) -> str:

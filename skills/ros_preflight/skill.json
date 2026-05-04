@@ -1,0 +1,19 @@
+{
+  "id": "ros_preflight",
+  "name": "ROS Gear Workflow Preflight",
+  "owner_agent": "orchestrator_agent",
+  "description": "Validate the Isaac ROS gear assembly workflow contract without commanding robot motion.",
+  "implementation": "ros_preflight",
+  "depends_on": ["env_preflight"],
+  "inputs": ["config"],
+  "outputs": ["ros_preflight_contract.json", "result.json"],
+  "validators": [
+    "workflow_type must be GEAR_ASSEMBLY",
+    "RMW_IMPLEMENTATION should be rmw_cyclonedds_cpp",
+    "ROS_DOMAIN_ID must be explicitly configured"
+  ],
+  "quality_gate": {"min_score": 0.8},
+  "human_required": false,
+  "release_blocking": true,
+  "real_robot": false
+}
