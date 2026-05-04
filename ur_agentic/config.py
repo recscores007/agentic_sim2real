@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+
+DEFAULTS: dict[str, Any] = {
+    "isaac_lab": {
+        "root": "~/IsaacLab",
+        "task_2f140": "Isaac-Deploy-GearAssembly-UR10e-2F140-v0",
+        "task_2f85": "Isaac-Deploy-GearAssembly-UR10e-2F85-v0",
+        "train_num_envs": 256,
+        "visualize_num_envs": 4,
+        "video_length": 800,
+        "video_interval": 5000,
+    },
+    "robot": {
+        "arm": "ur10e",
+        "gripper_type": "robotiq_2f_140",
+        "control_rate_hz": 30.0,
+        "nominal_action_scale_2f85": 0.025,
+        "nominal_action_scale_2f140": 0.0325,
+        "max_action_scale": 0.05,
+    },
+    "perception": {
+        "depth_type": "REALSENSE",
+        "camera_topic": "/camera_1/color/image_raw",
+        "debug_points_topic": "/input_points_debug",
+        "pose_error_gate_m": 0.01,
+        "training_shaft_pos_noise_m": 0.005,
+        "training_shaft_quat_noise_component": 0.01,
+    },
+    "isaac_ros": {
+        "workspace": "~/workspaces/isaac_ros-dev",
+        "ros_domain_id": "77",
+        "rmw_implementation": "rmw_cyclonedds_cpp",
+        "manipulator_config": "$(ros2 pkg prefix --share isaac_ros_manipulation_bringup)/params/ur10e_robotiq_2f_140_gear_assembly.yaml",
+        "workflow_type": "GEAR_ASSEMBLY",
+        "gear_action": "/gear_assembly",
+    },
+    "agent": {
+        "target_real_episodes": 10,
+        "min_real_episodes_for_gate": 3,
+        "max_recommended_delay_steps": 8,
+        "precision_task": True,
+    },
+    "safety": {
+        "require_human_gate": True,
+        "real_robot_gate_env": "I_ACCEPT_UR_REAL_ROBOT_RISK",
+        "real_robot_gate_value": "yes",
+        "max_contact_force_n": 80.0,
+    },
+}
+
+
+@dataclass(frozen=True)
+class PipelineConfig:
+    isaac_lab: dict[str, Any] = field(default_factory=dict)
+    robot: dict[str, Any] = field(default_factory=dict)
+    perception: dict[str, Any] = field(default_factory=dict)
+    isaac_ros: dict[str, Any] = field(default_factory=dict)
+    agent: dict[str, Any] = field(default_factory=dict)
+    safety: dict[str, Any] = field(default_factory=dict)
+
+    def merged(self) -> dict[str, Any]:
+        return {
+            "isaac_lab": self.isaac_lab,
+            "robot": self.robot,
+            "perception": self.perception,
+            "isaac_ros": self.isaac_ros,
+            "agent": self.agent,
+            "safety": self.safety,
+        }
+
+
+def load_config(path: str | Path) -> PipelineConfig:
+    data = json.loads(Path(path).expanduser().read_text())
+    merged = _deep_merge(DEFAULTS, data)
+    return PipelineConfig(
+        isaac_lab=dict(merged["isaac_lab"]),
+        robot=dict(merged["robot"]),
+        perception=dict(merged["perception"]),
+        isaac_ros=dict(merged["isaac_ros"]),
+        agent=dict(merged["agent"]),
+        safety=dict(merged["safety"]),
+    )
+
+
+def choose_task(config: PipelineConfig) -> str:
+    gripper = str(config.robot.get("gripper_type", "robotiq_2f_140")).lower()
+    if "85" in gripper:
+        return str(config.isaac_lab["task_2f85"])
+    return str(config.isaac_lab["task_2f140"])
+
+
+def nominal_action_scale(config: PipelineConfig) -> float:
+    gripper = str(config.robot.get("gripper_type", "robotiq_2f_140")).lower()
+    key = "nominal_action_scale_2f85" if "85" in gripper else "nominal_action_scale_2f140"
+    return float(config.robot[key])
+
+
+def command_env(config: PipelineConfig) -> dict[str, str]:
+    return {
+        "ISAAC_LAB_ROOT": str(config.isaac_lab["root"]),
+        "ISAAC_ROS_WS": str(config.isaac_ros["workspace"]),
+        "GEAR_TASK": choose_task(config),
+        "ROS_DOMAIN_ID": str(config.isaac_ros["ros_domain_id"]),
+        "RMW_IMPLEMENTATION": str(config.isaac_ros["rmw_implementation"]),
+        "GEAR_MANIPULATOR_CONFIG": str(config.isaac_ros["manipulator_config"]),
+        "GEAR_ACTION": str(config.isaac_ros["gear_action"]),
+    }
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in base.items():
+        if isinstance(value, dict):
+            result[key] = _deep_merge(value, override.get(key, {}))
+        else:
+            result[key] = override.get(key, value)
+    for key, value in override.items():
+        if key not in result:
+            result[key] = value
+    return result

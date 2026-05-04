@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+import argparse
+import shutil
+import sys
+
+from .autoresearch import build_plan
+from .config import PipelineConfig, choose_task, command_env, load_config
+from .dataset import load_records
+from .report import write_outputs
+from .safety import require_real_robot_gate
+from .sysid import estimate_gap
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="UR10e gear assembly agentic sim2real helper")
+    parser.add_argument("--config", default="configs/ur10e_gear_assembly.example.json")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("preflight", help="Check local command availability")
+    sub.add_parser("commands", help="Print tutorial-aligned Isaac Lab and Isaac ROS commands")
+
+    analyze = sub.add_parser("analyze", help="Analyze recorded real logs offline")
+    analyze.add_argument("--dataset", required=True)
+    analyze.add_argument("--out", required=True)
+
+    sub.add_parser("check-real-gate", help="Fail unless the real-robot human gate env var is set")
+
+    args = parser.parse_args(argv)
+    config = load_config(args.config)
+
+    if args.cmd == "preflight":
+        return cmd_preflight(config)
+    if args.cmd == "commands":
+        return cmd_commands(config)
+    if args.cmd == "analyze":
+        return cmd_analyze(config, args.dataset, args.out)
+    if args.cmd == "check-real-gate":
+        require_real_robot_gate(config)
+        print("Human gate env var present. Continue only with active supervision.")
+        return 0
+    raise AssertionError(args.cmd)
+
+
+def cmd_preflight(config: PipelineConfig) -> int:
+    commands = ["python3", "ros2", "launch_test", "rqt_image_view"]
+    print("Preflight checks")
+    failed = False
+    for command in commands:
+        found = shutil.which(command)
+        status = "ok" if found else "missing"
+        print(f"- {command}: {status}{' (' + found + ')' if found else ''}")
+        if command == "python3":
+            failed = failed or not found
+    print(f"- selected Isaac Lab task: {choose_task(config)}")
+    print(f"- ROS_DOMAIN_ID: {config.isaac_ros['ros_domain_id']}")
+    print(f"- RMW_IMPLEMENTATION: {config.isaac_ros['rmw_implementation']}")
+    return 1 if failed else 0
+
+
+def cmd_commands(config: PipelineConfig) -> int:
+    env = command_env(config)
+    print("# Export these first")
+    for key, value in env.items():
+        print(f"export {key}={_shell_quote(value)}")
+    print()
+    print("# Isaac Lab: visualize the training environment")
+    print("cd $ISAAC_LAB_ROOT")
+    print("python scripts/reinforcement_learning/rsl_rl/train.py --task $GEAR_TASK --num_envs 4")
+    print()
+    print("# Isaac Lab: full training with video recording")
+    print(
+        "python scripts/reinforcement_learning/rsl_rl/train.py "
+        "--task $GEAR_TASK --headless --num_envs 256 --video --video_length 800 --video_interval 5000"
+    )
+    print()
+    print("# Isaac ROS: validate pose estimation and calibration")
+    print("export ENABLE_MANIPULATOR_TESTING=manual_on_robot")
+    print("launch_test $(ros2 pkg prefix --share isaac_ros_manipulation_bringup)/test/test_pose_estimation_error_test.py")
+    print("bash ${ISAAC_ROS_WS}/src/isaac_ros_manipulation/isaac_ros_manipulation_bringup/test/compare_pose_estimation_results.sh")
+    print()
+    print("# Isaac ROS: deploy the gear assembly workflow after the human gate")
+    print("ros2 launch isaac_ros_manipulation_bringup workflows.launch.py manipulator_workflow_config:=$GEAR_MANIPULATOR_CONFIG")
+    print("ros2 action send_goal $GEAR_ACTION isaac_ros_manipulation_interfaces/action/GearAssembly {}")
+    return 0
+
+
+def cmd_analyze(config: PipelineConfig, dataset_path: str, out_dir: str) -> int:
+    records = load_records(dataset_path)
+    gap = estimate_gap(records, config)
+    plan = build_plan(gap, config)
+    paths = write_outputs(out_dir, gap, plan)
+    print(f"Analyzed {gap['summary']['records']} records across {gap['summary']['episodes']} episodes.")
+    for name, path in paths.items():
+        print(f"- {name}: {path}")
+    print(f"Transfer score: {plan['transfer_score']['score_0_to_1']} ({plan['transfer_score']['interpretation']})")
+    return 0
+
+
+def _shell_quote(value: str) -> str:
+    if value == "":
+        return "''"
+    safe = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:@-{}$()")
+    if all(ch in safe for ch in value):
+        return value
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+if __name__ == "__main__":
+    sys.exit(main())

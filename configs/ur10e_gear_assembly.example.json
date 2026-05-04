@@ -1,0 +1,47 @@
+{
+  "isaac_lab": {
+    "root": "~/IsaacLab",
+    "task_2f140": "Isaac-Deploy-GearAssembly-UR10e-2F140-v0",
+    "task_2f85": "Isaac-Deploy-GearAssembly-UR10e-2F85-v0",
+    "train_num_envs": 256,
+    "visualize_num_envs": 4,
+    "video_length": 800,
+    "video_interval": 5000
+  },
+  "robot": {
+    "arm": "ur10e",
+    "gripper_type": "robotiq_2f_140",
+    "control_rate_hz": 30.0,
+    "nominal_action_scale_2f85": 0.025,
+    "nominal_action_scale_2f140": 0.0325,
+    "max_action_scale": 0.05
+  },
+  "perception": {
+    "depth_type": "REALSENSE",
+    "camera_topic": "/camera_1/color/image_raw",
+    "debug_points_topic": "/input_points_debug",
+    "pose_error_gate_m": 0.01,
+    "training_shaft_pos_noise_m": 0.005,
+    "training_shaft_quat_noise_component": 0.01
+  },
+  "isaac_ros": {
+    "workspace": "~/workspaces/isaac_ros-dev",
+    "ros_domain_id": "77",
+    "rmw_implementation": "rmw_cyclonedds_cpp",
+    "manipulator_config": "$(ros2 pkg prefix --share isaac_ros_manipulation_bringup)/params/ur10e_robotiq_2f_140_gear_assembly.yaml",
+    "workflow_type": "GEAR_ASSEMBLY",
+    "gear_action": "/gear_assembly"
+  },
+  "agent": {
+    "target_real_episodes": 10,
+    "min_real_episodes_for_gate": 3,
+    "max_recommended_delay_steps": 8,
+    "precision_task": true
+  },
+  "safety": {
+    "require_human_gate": true,
+    "real_robot_gate_env": "I_ACCEPT_UR_REAL_ROBOT_RISK",
+    "real_robot_gate_value": "yes",
+    "max_contact_force_n": 80.0
+  }
+}

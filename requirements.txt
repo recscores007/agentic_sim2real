@@ -1,0 +1,2 @@
+# The offline agent uses only the Python standard library.
+# Optional real-robot/runtime dependencies are installed through Isaac Lab and Isaac ROS.
