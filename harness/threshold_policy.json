@@ -1,0 +1,43 @@
+{
+  "policy_version": "ur_gear_eval_v1",
+  "hard_safety_thresholds": {
+    "safe_to_autorun_robot": false,
+    "real_robot_gate_env": "I_ACCEPT_UR_REAL_ROBOT_RISK",
+    "real_robot_gate_value": "yes",
+    "max_contact_force_n": 80.0
+  },
+  "tutorial_spec_thresholds": {
+    "pose_error_gate_m": 0.01,
+    "control_rate_hz": 30.0,
+    "nominal_action_scale_2f140": 0.0325,
+    "nominal_action_scale_2f85": 0.025,
+    "gear_shaft_pos_noise_m": 0.005,
+    "gear_shaft_quat_noise_component": 0.01
+  },
+  "statistical_thresholds": {
+    "min_pose_repeatability_samples": 10,
+    "target_pose_repeatability_samples": 20,
+    "min_real_episodes_for_gate": 3,
+    "min_skill_confidence_for_auto_promotion": 0.5
+  },
+  "regression_thresholds": {
+    "min_success_delta": 0.0,
+    "max_contact_over_limit_ratio": 0.05,
+    "candidate_peak_force_must_be_below_safety_limit": true,
+    "candidate_pose_error_must_be_below_pose_gate": true
+  },
+  "ownership": {
+    "agent_can_propose_changes_to": [
+      "domain_randomization",
+      "action_scale_candidates",
+      "experiment_order",
+      "sysid_targets"
+    ],
+    "agent_cannot_change_without_human_approval": [
+      "hard_safety_thresholds",
+      "real_robot_gate",
+      "pose_error_gate_m",
+      "safe_to_autorun_robot"
+    ]
+  }
+}

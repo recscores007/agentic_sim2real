@@ -60,6 +60,7 @@ skills/                         Atomic skill contracts
 
 ur_agentic/
   skill_harness.py              Skill runner, validators, scoreboard, release gate
+  evaluation_loop.py            Agent/Evaluator/Critic/Release/Human trace
   autoresearch.py               Experiment planner
   sysid.py                      Sim-real gap and SysID recommendations
   metrics.py                    Delay, stiction, pose, contact metrics
@@ -67,6 +68,7 @@ ur_agentic/
 
 scripts/
   run_skill_harness.sh          Default validation harness
+  run_evaluation_loop.sh        Five-stage evaluation trace
   run_autoresearch_loop.sh      Harness plus AutoResearch evidence path
   isaaclab_train.sh             Tutorial training wrapper
   ros_preflight.sh              ROS validation helper
@@ -76,6 +78,7 @@ golden/sample_inputs/           Golden validation fixtures
 sample_data/real_log_demo.jsonl Sample real-log schema
 agents/README.md                Agent responsibilities
 harness/README.md               Harness design
+harness/threshold_policy.json   Safety/spec/statistical/regression thresholds
 ```
 
 ## Atomic Skills
@@ -139,6 +142,66 @@ Promotion rule:
 AutoResearch may promote a candidate only to human review.
 It never promotes directly to unattended robot execution.
 ```
+
+## Evaluation Loop
+
+The repo now makes the evaluator architecture explicit:
+
+```text
+Agent proposes.
+Evaluator measures.
+Critic challenges.
+Release gate decides.
+Human approves hardware.
+```
+
+Run it:
+
+```bash
+./scripts/run_evaluation_loop.sh
+```
+
+Equivalent CLI:
+
+```bash
+ur-gear-agentic --config "$UR_GEAR_CONFIG" run-evaluation-loop \
+  --root . \
+  --dataset sample_data/real_log_demo.jsonl \
+  --out outputs/evaluation_demo
+```
+
+Outputs:
+
+```text
+outputs/evaluation_demo/
+  agent_proposal.json
+  evaluator_measurements.json
+  critic_challenges.json
+  release_decision.json
+  human_hardware_gate.json
+  evaluation_trace.json
+  evaluation_trace.md
+```
+
+What each role owns:
+
+| Stage | Code | Authority |
+| --- | --- | --- |
+| Agent proposes | `ur_agentic/autoresearch.py` | Creates hypotheses and candidate parameter families |
+| Evaluator measures | `ur_agentic/skill_harness.py` | Runs deterministic skills and writes metrics/evidence |
+| Critic challenges | `ur_agentic/evaluation_loop.py` | Flags low confidence, warnings, regressions, and failed skills |
+| Release gate decides | `ur_agentic/evaluation_loop.py` | Blocks or promotes to human review; never autoruns robot |
+| Human approves hardware | `ur_agentic/safety.py` | Requires explicit supervised hardware approval |
+
+Thresholds live in `harness/threshold_policy.json`:
+
+- hard safety thresholds
+- tutorial/spec thresholds
+- statistical thresholds
+- regression thresholds
+
+Agents may propose new parameters, but the evaluator and release gate own
+pass/fail.
 
 ## Step By Step: Local Skill Harness
 
@@ -243,6 +306,16 @@ The plan contains:
 - human action
 - parameter change
 - promotion rule
+
+### 8. Run the full evaluation trace
+
+```bash
+./scripts/run_evaluation_loop.sh
+cat outputs/evaluation_demo/evaluation_trace.md
+```
+
+This is the easiest way to see the full proposal -> measurement -> critique ->
+decision -> human gate chain.
 
 ## Step By Step: Tutorial Training
 
@@ -423,6 +496,7 @@ PYTHONPYCACHEPREFIX=/tmp/ur_pycache python3 -m py_compile ur_agentic/*.py tests/
 PYTHONPATH=. python3 -m unittest discover -s tests
 PYTHONPATH=. python3 -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json validate-skills --root .
 PYTHONPATH=. python3 -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json run-harness --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/ur_harness
+PYTHONPATH=. python3 -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json run-evaluation-loop --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/ur_eval
 bash -n scripts/*.sh
 ```
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from .autoresearch import build_plan
 from .config import PipelineConfig, choose_task, command_env, load_config
 from .dataset import load_records
+from .evaluation_loop import run_evaluation_loop
 from .report import write_outputs
 from .safety import require_real_robot_gate
 from .skill_harness import load_manifests, run_harness, validate_all_manifests
@@ -38,6 +39,13 @@ def main(argv: list[str] | None = None) -> int:
     harness.add_argument("--skill", default=None, help="Run one skill by id")
     harness.add_argument("--include-real", action="store_true", help="Include real-robot skills after human approval")
 
+    eval_loop = sub.add_parser("run-evaluation-loop", help="Run Agent/Evaluator/Critic/Release/Human trace")
+    eval_loop.add_argument("--root", default=".")
+    eval_loop.add_argument("--dataset", default="sample_data/real_log_demo.jsonl")
+    eval_loop.add_argument("--out", required=True)
+    eval_loop.add_argument("--threshold-policy", default=None)
+    eval_loop.add_argument("--include-real", action="store_true")
+
     sub.add_parser("check-real-gate", help="Fail unless the real-robot human gate env var is set")
 
     args = parser.parse_args(argv)
@@ -55,6 +63,15 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_analyze(config, args.dataset, args.out)
     if args.cmd == "run-harness":
         return cmd_run_harness(args.root, args.config, args.dataset, args.out, args.include_real, args.skill)
+    if args.cmd == "run-evaluation-loop":
+        return cmd_run_evaluation_loop(
+            args.root,
+            args.config,
+            args.dataset,
+            args.out,
+            args.threshold_policy,
+            args.include_real,
+        )
     if args.cmd == "check-real-gate":
         require_real_robot_gate(config)
         print("Human gate env var present. Continue only with active supervision.")
@@ -149,6 +166,26 @@ def cmd_run_harness(
     )
     print(json.dumps(scoreboard, indent=2, sort_keys=True))
     return 0 if scoreboard["status"] == "pass" else 1
+
+
+def cmd_run_evaluation_loop(
+    root: str,
+    config_path: str,
+    dataset_path: str,
+    out_dir: str,
+    threshold_policy_path: str | None,
+    include_real: bool,
+) -> int:
+    trace = run_evaluation_loop(
+        root=root,
+        config_path=config_path,
+        dataset_path=dataset_path,
+        out_dir=out_dir,
+        threshold_policy_path=threshold_policy_path,
+        include_real=include_real,
+    )
+    print(json.dumps(trace, indent=2, sort_keys=True))
+    return 0 if trace["release_gate_decides"]["status"] == "promote_to_human_review" else 1
 
 
 def _shell_quote(value: str) -> str:

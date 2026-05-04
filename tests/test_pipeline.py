@@ -8,6 +8,7 @@ from pathlib import Path
 from ur_agentic.cli import main
 from ur_agentic.config import choose_task, load_config, nominal_action_scale
 from ur_agentic.dataset import load_records
+from ur_agentic.evaluation_loop import run_evaluation_loop
 from ur_agentic.skill_harness import run_harness, validate_all_manifests
 from ur_agentic.sysid import estimate_gap
 
@@ -74,6 +75,22 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(scoreboard["status"], "pass")
             self.assertIn("release_candidate_gate", scoreboard["skills"])
             self.assertTrue((Path(tmp) / "scoreboard.json").exists())
+
+    def test_evaluation_loop_writes_five_stage_trace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            trace = run_evaluation_loop(
+                root=ROOT,
+                config_path=ROOT / "configs" / "ur10e_gear_assembly.example.json",
+                dataset_path=ROOT / "sample_data" / "real_log_demo.jsonl",
+                out_dir=tmp,
+            )
+            self.assertIn("agent_proposes", trace)
+            self.assertIn("evaluator_measures", trace)
+            self.assertIn("critic_challenges", trace)
+            self.assertIn("release_gate_decides", trace)
+            self.assertIn("human_approves_hardware", trace)
+            self.assertFalse(trace["release_gate_decides"]["safe_to_autorun_robot"])
+            self.assertTrue((Path(tmp) / "evaluation_trace.md").exists())
 
 
 if __name__ == "__main__":

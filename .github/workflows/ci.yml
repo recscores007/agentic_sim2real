@@ -20,5 +20,7 @@ jobs:
         run: PYTHONPATH=. python -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json validate-skills --root .
       - name: Skill harness golden run
         run: PYTHONPATH=. python -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json run-harness --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/ur_gear_harness
+      - name: Evaluation loop golden run
+        run: PYTHONPATH=. python -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json run-evaluation-loop --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/ur_gear_eval
       - name: Shell syntax
         run: bash -n scripts/*.sh
