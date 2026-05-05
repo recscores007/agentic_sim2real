@@ -8,10 +8,10 @@ SESSION="${1:-${SCRIPT_DIR}/../embodiments/manipulator/ur10e_gear_assembly/real_
 OUT="${2:-}"
 
 if [[ -n "${OUT}" ]]; then
-  python3 -m ur_agentic.cli --config "${UR_GEAR_CONFIG}" prepare-real-data \
+  python3 -m agentic_sim2real.cli --config "${AGENTIC_SIM2REAL_CONFIG}" prepare-real-data \
     --session "${SESSION}" \
     --out "${OUT}"
 else
-  python3 -m ur_agentic.cli --config "${UR_GEAR_CONFIG}" prepare-real-data \
+  python3 -m agentic_sim2real.cli --config "${AGENTIC_SIM2REAL_CONFIG}" prepare-real-data \
     --session "${SESSION}"
 fi

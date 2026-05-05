@@ -294,14 +294,14 @@ def _run_command_skill(
     env = os.environ.copy()
     env.update(
         {
-            "UR_SKILL_ID": manifest.skill_id,
-            "UR_SKILL_INPUT_JSON": str(input_path),
-            "UR_SKILL_OUTPUT_JSON": str(output_path),
-            "UR_SKILL_OUT_DIR": str(skill_out),
-            "UR_SKILL_MANIFEST_DIR": str(manifest.path.parent),
-            "UR_ROOT": str(ctx.root),
-            "UR_CONFIG": str(ctx.config_path),
-            "UR_DATASET": str(ctx.dataset),
+            "AGENTIC_SIM2REAL_SKILL_ID": manifest.skill_id,
+            "AGENTIC_SIM2REAL_SKILL_INPUT_JSON": str(input_path),
+            "AGENTIC_SIM2REAL_SKILL_OUTPUT_JSON": str(output_path),
+            "AGENTIC_SIM2REAL_SKILL_OUT_DIR": str(skill_out),
+            "AGENTIC_SIM2REAL_SKILL_MANIFEST_DIR": str(manifest.path.parent),
+            "AGENTIC_SIM2REAL_ROOT": str(ctx.root),
+            "AGENTIC_SIM2REAL_CONFIG_PATH": str(ctx.config_path),
+            "AGENTIC_SIM2REAL_DATASET": str(ctx.dataset),
         }
     )
     try:
@@ -365,7 +365,7 @@ def _run_command_skill(
         elif completed.stdout.strip():
             payload = json.loads(completed.stdout)
         else:
-            raise ValueError("external skill did not write UR_SKILL_OUTPUT_JSON or JSON stdout")
+            raise ValueError("external skill did not write AGENTIC_SIM2REAL_SKILL_OUTPUT_JSON or JSON stdout")
     except Exception as exc:
         return SkillResult(
             skill_id=manifest.skill_id,

@@ -43,7 +43,7 @@ Current embodiments:
 Validate the contract from the repo root:
 
 ```bash
-python3 -m ur_agentic.cli validate-embodiments --root .
+python3 -m agentic_sim2real.cli validate-embodiments --root .
 ```
 
 Use `object_pose.csv` as the portable pose file name. Task-specific embodiments

@@ -8,7 +8,7 @@ DATASET="${DATASET:-${SCRIPT_DIR}/../sample_data/real_log_demo.jsonl}"
 OUT="${OUT:-${SCRIPT_DIR}/../outputs/autoresearch_demo}"
 
 echo "Running skill validation harness with AutoResearch planner enabled."
-python3 -m ur_agentic.cli --config "${UR_GEAR_CONFIG}" run-harness \
+python3 -m agentic_sim2real.cli --config "${AGENTIC_SIM2REAL_CONFIG}" run-harness \
   --root "${SCRIPT_DIR}/.." \
   --dataset "${DATASET}" \
   --out "${OUT}" \

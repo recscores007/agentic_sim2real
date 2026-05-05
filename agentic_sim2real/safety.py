@@ -8,7 +8,7 @@ from .config import PipelineConfig
 def require_real_robot_gate(config: PipelineConfig) -> None:
     if not bool(config.safety.get("require_human_gate", True)):
         return
-    key = str(config.safety.get("real_robot_gate_env", "I_ACCEPT_UR_REAL_ROBOT_RISK"))
+    key = str(config.safety.get("real_robot_gate_env", "I_ACCEPT_AGENTIC_SIM2REAL_REAL_ROBOT_RISK"))
     expected = str(config.safety.get("real_robot_gate_value", "yes"))
     actual = os.environ.get(key)
     if actual != expected:

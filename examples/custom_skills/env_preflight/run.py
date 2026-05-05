@@ -6,9 +6,9 @@ from pathlib import Path
 
 
 def main() -> int:
-    input_path = Path(os.environ["UR_SKILL_INPUT_JSON"])
-    output_path = Path(os.environ["UR_SKILL_OUTPUT_JSON"])
-    skill_out = Path(os.environ["UR_SKILL_OUT_DIR"])
+    input_path = Path(os.environ["AGENTIC_SIM2REAL_SKILL_INPUT_JSON"])
+    output_path = Path(os.environ["AGENTIC_SIM2REAL_SKILL_OUTPUT_JSON"])
+    skill_out = Path(os.environ["AGENTIC_SIM2REAL_SKILL_OUT_DIR"])
     payload = json.loads(input_path.read_text())
 
     evidence_path = skill_out / "custom_preflight.json"

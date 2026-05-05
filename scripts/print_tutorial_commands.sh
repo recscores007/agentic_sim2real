@@ -4,4 +4,4 @@ set -euo pipefail
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/_env.sh"
 
-python3 -m ur_agentic.cli --config "${UR_GEAR_CONFIG}" commands
+python3 -m agentic_sim2real.cli --config "${AGENTIC_SIM2REAL_CONFIG}" commands

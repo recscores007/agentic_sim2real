@@ -54,14 +54,14 @@ Run the included example replacement:
 
 Command-runner skills receive:
 
-- `UR_SKILL_INPUT_JSON`
-- `UR_SKILL_OUTPUT_JSON`
-- `UR_SKILL_OUT_DIR`
-- `UR_SKILL_MANIFEST_DIR`
-- `UR_ROOT`
-- `UR_CONFIG`
-- `UR_DATASET`
-- `UR_SKILL_ID`
+- `AGENTIC_SIM2REAL_SKILL_INPUT_JSON`
+- `AGENTIC_SIM2REAL_SKILL_OUTPUT_JSON`
+- `AGENTIC_SIM2REAL_SKILL_OUT_DIR`
+- `AGENTIC_SIM2REAL_SKILL_MANIFEST_DIR`
+- `AGENTIC_SIM2REAL_ROOT`
+- `AGENTIC_SIM2REAL_CONFIG_PATH`
+- `AGENTIC_SIM2REAL_DATASET`
+- `AGENTIC_SIM2REAL_SKILL_ID`
 
 They must write the standard skill result JSON. The harness still applies the
 manifest quality gate and release-blocking behavior after the custom command
@@ -82,7 +82,7 @@ human approval.
 
 ## SysID Boundary
 
-Current SysID is log-based and implemented in `ur_agentic/sysid.py`. It
+Current SysID is log-based and implemented in `agentic_sim2real/sysid.py`. It
 estimates delay, stiction/deadband, pose noise, reset scatter, contact summary,
 and bounded recommendations.
 

@@ -66,7 +66,7 @@ The release gate writes `release_decision.json`.
 The hardware gate requires:
 
 ```bash
-export I_ACCEPT_UR_REAL_ROBOT_RISK=yes
+export I_ACCEPT_AGENTIC_SIM2REAL_REAL_ROBOT_RISK=yes
 ```
 
 That approval means only supervised hardware execution is allowed. It does not
@@ -89,7 +89,7 @@ the candidate is releasable.
 ## IsaacLab-Newton Status
 
 The current repository does not run IsaacLab-Newton SysID. The active SysID path
-is the local log-based estimator in `ur_agentic/sysid.py`.
+is the local log-based estimator in `agentic_sim2real/sysid.py`.
 
 IsaacLab-Newton should be added as a separate portable skill, for example
 `newton_sysid`, that consumes aligned real data, fits parameters, writes

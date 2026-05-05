@@ -7,7 +7,7 @@ source "${SCRIPT_DIR}/_env.sh"
 DATASET="${DATASET:-${SCRIPT_DIR}/../sample_data/real_log_demo.jsonl}"
 OUT="${OUT:-${SCRIPT_DIR}/../outputs/evaluation_demo}"
 
-python3 -m ur_agentic.cli --config "${UR_GEAR_CONFIG}" run-evaluation-loop \
+python3 -m agentic_sim2real.cli --config "${AGENTIC_SIM2REAL_CONFIG}" run-evaluation-loop \
   --root "${SCRIPT_DIR}/.." \
   --dataset "${DATASET}" \
   --out "${OUT}" \

@@ -1,14 +1,14 @@
 # Agentic Sim2Real Skills
 
-This repo turns the Isaac Lab / Isaac ROS UR10e gear assembly tutorial into a
-concrete example of an agentic, skill-based sim2real pipeline. The tutorial is
-UR10e gear assembly, but the skill architecture is intended to become generic
-across robots, tasks, and simulators.
+This repo is a portable `agentic_sim2real` framework for skill-based
+sim2real workflows across embodiments such as manipulators, humanoids, and
+mobile manipulators. The UR10e gear assembly tutorial is the first concrete
+manipulator example, not the framework boundary.
 
 The important change is this:
 
 ```text
-tutorial step -> atomic skill -> agent runs skill -> harness validates skill -> release gate
+workflow step -> atomic skill -> agent runs skill -> harness validates skill -> release gate
 ```
 
 Every skill has a manifest, input/output contract, validators, quality score,
@@ -89,7 +89,7 @@ Current SysID status:
 | --- | --- |
 | Can the offline pipeline autorun from an embodiment real-data session? | Yes, after `prepare_real_data.sh` creates or refreshes `aligned/records.jsonl`. |
 | Can it autorun a physical robot with no human? | No. Hardware is intentionally human-gated. |
-| Is SysID currently using IsaacLab-Newton from `es-rl/IsaacLab-Newton`? | No. The current implementation is the local log-based estimator in `ur_agentic/sysid.py`. |
+| Is SysID currently using IsaacLab-Newton from `es-rl/IsaacLab-Newton`? | No. The current implementation is the local log-based estimator in `agentic_sim2real/sysid.py`. |
 | What does current SysID estimate? | Delay, stiction/deadband proxy, contact summary, pose noise, reset scatter, action-scale bounds, and domain-randomization recommendations. |
 | Where should Newton SysID fit? | As a future portable `newton_sysid` skill that consumes aligned real data, runs IsaacLab-Newton fitting, writes fitted parameters/evidence, and feeds the evaluator/release gate. |
 
@@ -172,11 +172,11 @@ See `examples/custom_skills/env_preflight/skill.json` for a complete manifest.
 
 The harness gives command skills:
 
-- `UR_SKILL_INPUT_JSON`: input bundle with config, dataset, manifest, output paths, and previous skill results
-- `UR_SKILL_OUTPUT_JSON`: path where the skill writes its result JSON
-- `UR_SKILL_OUT_DIR`: evidence directory for this skill
-- `UR_SKILL_MANIFEST_DIR`: directory containing the selected `skill.json`
-- `UR_ROOT`, `UR_CONFIG`, `UR_DATASET`, `UR_SKILL_ID`
+- `AGENTIC_SIM2REAL_SKILL_INPUT_JSON`: input bundle with config, dataset, manifest, output paths, and previous skill results
+- `AGENTIC_SIM2REAL_SKILL_OUTPUT_JSON`: path where the skill writes its result JSON
+- `AGENTIC_SIM2REAL_SKILL_OUT_DIR`: evidence directory for this skill
+- `AGENTIC_SIM2REAL_SKILL_MANIFEST_DIR`: directory containing the selected `skill.json`
+- `AGENTIC_SIM2REAL_ROOT`, `AGENTIC_SIM2REAL_CONFIG_PATH`, `AGENTIC_SIM2REAL_DATASET`, `AGENTIC_SIM2REAL_SKILL_ID`
 
 The skill result contract is stable:
 
@@ -200,7 +200,7 @@ If a custom skill can command hardware, mark `"real_robot": true`. The default
 harness skips real-robot skills unless `--include-real` is explicitly passed
 after human approval.
 
-## What This Targets
+## Current UR10e Example
 
 - UR10e arm as the current example robot
 - Robotiq 2F-140 gripper by default, with 2F-85 supported by config
@@ -216,7 +216,7 @@ Sources double checked:
 - Isaac ROS gear assembly deployment tutorial:
   https://nvidia-isaac-ros.github.io/reference_workflows/isaac_for_manipulation/tutorials/sim_to_real/tutorial_gear_assembly.html
 
-Tutorial facts encoded in the config and skill contracts:
+UR10e tutorial facts encoded in the config and skill contracts:
 
 - Policy observations: `joint_pos`, `joint_vel`, `gear_shaft_pos`, `gear_shaft_quat`
 - Shaft pose source: FoundationPose + RealSense depth
@@ -251,7 +251,7 @@ embodiments/
     ur10e_gear_assembly/
       real_data/                UR example templates and sessions
 
-ur_agentic/
+agentic_sim2real/
   skill_harness.py              Skill runner, validators, scoreboard, release gate
   evaluation_loop.py            Agent/Evaluator/Critic/Release/Human trace
   autoresearch.py               Experiment planner
@@ -371,7 +371,7 @@ Run it:
 Equivalent CLI:
 
 ```bash
-ur-gear-agentic --config "$UR_GEAR_CONFIG" run-evaluation-loop \
+agentic-sim2real --config "$AGENTIC_SIM2REAL_CONFIG" run-evaluation-loop \
   --root . \
   --dataset sample_data/real_log_demo.jsonl \
   --out outputs/evaluation_demo
@@ -394,11 +394,11 @@ What each role owns:
 
 | Stage | Code | Authority |
 | --- | --- | --- |
-| Agent proposes | `ur_agentic/autoresearch.py` | Creates hypotheses and candidate parameter families |
-| Evaluator measures | `ur_agentic/skill_harness.py` | Runs deterministic skills and writes metrics/evidence |
-| Critic challenges | `ur_agentic/evaluation_loop.py` | Flags low confidence, warnings, regressions, and failed skills |
-| Release gate decides | `ur_agentic/evaluation_loop.py` | Blocks or promotes to human review; never autoruns robot |
-| Human approves hardware | `ur_agentic/safety.py` | Requires explicit supervised hardware approval |
+| Agent proposes | `agentic_sim2real/autoresearch.py` | Creates hypotheses and candidate parameter families |
+| Evaluator measures | `agentic_sim2real/skill_harness.py` | Runs deterministic skills and writes metrics/evidence |
+| Critic challenges | `agentic_sim2real/evaluation_loop.py` | Flags low confidence, warnings, regressions, and failed skills |
+| Release gate decides | `agentic_sim2real/evaluation_loop.py` | Blocks or promotes to human review; never autoruns robot |
+| Human approves hardware | `agentic_sim2real/safety.py` | Requires explicit supervised hardware approval |
 
 Thresholds live in `harness/threshold_policy.json`:
 
@@ -531,7 +531,7 @@ git clone https://github.com/recscores007/agentic_sim2real.git
 cd agentic_sim2real
 python3 -m pip install -e .
 cp configs/ur10e_gear_assembly.example.json configs/ur10e_gear_assembly.local.json
-export UR_GEAR_CONFIG=$PWD/configs/ur10e_gear_assembly.local.json
+export AGENTIC_SIM2REAL_CONFIG=$PWD/configs/ur10e_gear_assembly.local.json
 ```
 
 Edit `configs/ur10e_gear_assembly.local.json` for your Isaac Lab root, Isaac
@@ -540,13 +540,13 @@ ROS workspace, gripper type, `ROS_DOMAIN_ID`, and manipulator config path.
 ### 2. List the skills
 
 ```bash
-ur-gear-agentic --config "$UR_GEAR_CONFIG" list-skills
+agentic-sim2real --config "$AGENTIC_SIM2REAL_CONFIG" list-skills
 ```
 
 ### 3. Validate every skill manifest
 
 ```bash
-ur-gear-agentic --config "$UR_GEAR_CONFIG" validate-skills --root .
+agentic-sim2real --config "$AGENTIC_SIM2REAL_CONFIG" validate-skills --root .
 ```
 
 This checks that every skill has:
@@ -568,7 +568,7 @@ This checks that every skill has:
 Equivalent CLI:
 
 ```bash
-ur-gear-agentic --config "$UR_GEAR_CONFIG" run-harness \
+agentic-sim2real --config "$AGENTIC_SIM2REAL_CONFIG" run-harness \
   --root . \
   --dataset sample_data/real_log_demo.jsonl \
   --out outputs/harness_demo
@@ -597,7 +597,7 @@ Release status is pass only if every release-blocking offline skill passes.
 ### 6. Run only one skill
 
 ```bash
-ur-gear-agentic --config "$UR_GEAR_CONFIG" run-harness \
+agentic-sim2real --config "$AGENTIC_SIM2REAL_CONFIG" run-harness \
   --root . \
   --dataset sample_data/real_log_demo.jsonl \
   --out outputs/pose_only \
@@ -724,7 +724,7 @@ Do not continue if pose error is above 1 cm.
 ### 2. Record real observations
 
 ```bash
-./scripts/collect_real_logs.sh rosbags/ur_gear_day1
+./scripts/collect_real_logs.sh rosbags/agentic_sim2real_day1
 ```
 
 Convert your observations into JSONL like:
@@ -792,14 +792,14 @@ Checklist:
 Terminal 1:
 
 ```bash
-export I_ACCEPT_UR_REAL_ROBOT_RISK=yes
+export I_ACCEPT_AGENTIC_SIM2REAL_REAL_ROBOT_RISK=yes
 ./scripts/isaac_ros_launch_gear.sh
 ```
 
 Terminal 2, after `cuMotion is ready for planning queries!`:
 
 ```bash
-export I_ACCEPT_UR_REAL_ROBOT_RISK=yes
+export I_ACCEPT_AGENTIC_SIM2REAL_REAL_ROBOT_RISK=yes
 ./scripts/real_robot_human_gate.sh --send-goal
 ```
 
@@ -821,11 +821,11 @@ proposes bounded updates when it is not.
 ## Developer Checks
 
 ```bash
-PYTHONPYCACHEPREFIX=/tmp/ur_pycache python3 -m py_compile ur_agentic/*.py tests/test_pipeline.py
+PYTHONPYCACHEPREFIX=/tmp/agentic_sim2real_pycache python3 -m py_compile agentic_sim2real/*.py tests/test_pipeline.py
 PYTHONPATH=. python3 -m unittest discover -s tests
-PYTHONPATH=. python3 -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json validate-skills --root .
-PYTHONPATH=. python3 -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json run-harness --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/ur_harness
-PYTHONPATH=. python3 -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json run-evaluation-loop --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/ur_eval
+PYTHONPATH=. python3 -m agentic_sim2real.cli --config configs/ur10e_gear_assembly.example.json validate-skills --root .
+PYTHONPATH=. python3 -m agentic_sim2real.cli --config configs/ur10e_gear_assembly.example.json run-harness --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/agentic_sim2real_harness
+PYTHONPATH=. python3 -m agentic_sim2real.cli --config configs/ur10e_gear_assembly.example.json run-evaluation-loop --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/agentic_sim2real_eval
 bash -n scripts/*.sh
 ```
 

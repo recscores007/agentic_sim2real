@@ -14,5 +14,5 @@ ISAAC_LAB_ROOT_EXPANDED="${ISAAC_LAB_ROOT/#\~/${HOME}}"
 cd "${ISAAC_LAB_ROOT_EXPANDED}"
 
 python scripts/reinforcement_learning/rsl_rl/play.py \
-  --task "${GEAR_TASK}" \
+  --task "${AGENTIC_SIM2REAL_TASK}" \
   --checkpoint "${CHECKPOINT}"

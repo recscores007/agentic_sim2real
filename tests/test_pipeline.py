@@ -5,14 +5,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ur_agentic.cli import main
-from ur_agentic.config import choose_task, load_config, nominal_action_scale
-from ur_agentic.dataset import load_records
-from ur_agentic.embodiments import validate_embodiments
-from ur_agentic.evaluation_loop import run_evaluation_loop
-from ur_agentic.real_data import prepare_real_session
-from ur_agentic.skill_harness import run_harness, validate_all_manifests
-from ur_agentic.sysid import estimate_gap
+from agentic_sim2real.cli import main
+from agentic_sim2real.config import choose_task, load_config, nominal_action_scale
+from agentic_sim2real.dataset import load_records
+from agentic_sim2real.embodiments import validate_embodiments
+from agentic_sim2real.evaluation_loop import run_evaluation_loop
+from agentic_sim2real.real_data import prepare_real_session
+from agentic_sim2real.skill_harness import run_harness, validate_all_manifests
+from agentic_sim2real.sysid import estimate_gap
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,8 +93,8 @@ class PipelineTests(unittest.TestCase):
                         "import json",
                         "import os",
                         "from pathlib import Path",
-                        "out = Path(os.environ['UR_SKILL_OUTPUT_JSON'])",
-                        "skill_out = Path(os.environ['UR_SKILL_OUT_DIR'])",
+                        "out = Path(os.environ['AGENTIC_SIM2REAL_SKILL_OUTPUT_JSON'])",
+                        "skill_out = Path(os.environ['AGENTIC_SIM2REAL_SKILL_OUT_DIR'])",
                         "evidence = skill_out / 'custom_evidence.json'",
                         "evidence.write_text(json.dumps({'custom': True}) + '\\n')",
                         "out.write_text(json.dumps({",

@@ -122,12 +122,12 @@ def cmd_commands(config: PipelineConfig) -> int:
     print()
     print("# Isaac Lab: visualize the training environment")
     print("cd $ISAAC_LAB_ROOT")
-    print("python scripts/reinforcement_learning/rsl_rl/train.py --task $GEAR_TASK --num_envs 4")
+    print("python scripts/reinforcement_learning/rsl_rl/train.py --task $AGENTIC_SIM2REAL_TASK --num_envs 4")
     print()
     print("# Isaac Lab: full training with video recording")
     print(
         "python scripts/reinforcement_learning/rsl_rl/train.py "
-        "--task $GEAR_TASK --headless --num_envs 256 --video --video_length 800 --video_interval 5000"
+        "--task $AGENTIC_SIM2REAL_TASK --headless --num_envs 256 --video --video_length 800 --video_interval 5000"
     )
     print()
     print("# Isaac ROS: validate pose estimation and calibration")
@@ -136,8 +136,8 @@ def cmd_commands(config: PipelineConfig) -> int:
     print("bash ${ISAAC_ROS_WS}/src/isaac_ros_manipulation/isaac_ros_manipulation_bringup/test/compare_pose_estimation_results.sh")
     print()
     print("# Isaac ROS: deploy the gear assembly workflow after the human gate")
-    print("ros2 launch isaac_ros_manipulation_bringup workflows.launch.py manipulator_workflow_config:=$GEAR_MANIPULATOR_CONFIG")
-    print("ros2 action send_goal $GEAR_ACTION isaac_ros_manipulation_interfaces/action/GearAssembly {}")
+    print("ros2 launch isaac_ros_manipulation_bringup workflows.launch.py manipulator_workflow_config:=$AGENTIC_SIM2REAL_DEPLOYMENT_CONFIG")
+    print("ros2 action send_goal $AGENTIC_SIM2REAL_ACTION isaac_ros_manipulation_interfaces/action/GearAssembly {}")
     return 0
 
 

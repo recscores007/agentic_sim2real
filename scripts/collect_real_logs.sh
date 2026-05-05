@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/_env.sh"
 
-OUT="${1:-rosbags/ur_gear_$(date +%Y%m%d_%H%M%S)}"
+OUT="${1:-rosbags/agentic_sim2real_$(date +%Y%m%d_%H%M%S)}"
 mkdir -p "$(dirname -- "${OUT}")"
 
 export ROS_DOMAIN_ID

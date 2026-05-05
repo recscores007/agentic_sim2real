@@ -49,7 +49,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "safety": {
         "require_human_gate": True,
-        "real_robot_gate_env": "I_ACCEPT_UR_REAL_ROBOT_RISK",
+        "real_robot_gate_env": "I_ACCEPT_AGENTIC_SIM2REAL_REAL_ROBOT_RISK",
         "real_robot_gate_value": "yes",
         "max_contact_force_n": 80.0,
     },
@@ -106,11 +106,11 @@ def command_env(config: PipelineConfig) -> dict[str, str]:
     return {
         "ISAAC_LAB_ROOT": str(config.isaac_lab["root"]),
         "ISAAC_ROS_WS": str(config.isaac_ros["workspace"]),
-        "GEAR_TASK": choose_task(config),
+        "AGENTIC_SIM2REAL_TASK": choose_task(config),
         "ROS_DOMAIN_ID": str(config.isaac_ros["ros_domain_id"]),
         "RMW_IMPLEMENTATION": str(config.isaac_ros["rmw_implementation"]),
-        "GEAR_MANIPULATOR_CONFIG": str(config.isaac_ros["manipulator_config"]),
-        "GEAR_ACTION": str(config.isaac_ros["gear_action"]),
+        "AGENTIC_SIM2REAL_DEPLOYMENT_CONFIG": str(config.isaac_ros["manipulator_config"]),
+        "AGENTIC_SIM2REAL_ACTION": str(config.isaac_ros["gear_action"]),
     }
 
 

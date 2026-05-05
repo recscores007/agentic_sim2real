@@ -3,16 +3,16 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ur-gear-agentic"
+name = "agentic-sim2real"
 version = "0.1.0"
-description = "Agentic sim2real helper for the Isaac Lab UR10e gear assembly tutorial."
+description = "Portable agentic sim2real framework with embodiment-scoped robot examples."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Codex" }]
 dependencies = []
 
 [project.scripts]
-ur-gear-agentic = "ur_agentic.cli:main"
+agentic-sim2real = "agentic_sim2real.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["ur_agentic*"]
+include = ["agentic_sim2real*"]

@@ -41,7 +41,7 @@
   },
   "safety": {
     "require_human_gate": true,
-    "real_robot_gate_env": "I_ACCEPT_UR_REAL_ROBOT_RISK",
+    "real_robot_gate_env": "I_ACCEPT_AGENTIC_SIM2REAL_REAL_ROBOT_RISK",
     "real_robot_gate_value": "yes",
     "max_contact_force_n": 80.0
   }

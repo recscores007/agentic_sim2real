@@ -13,18 +13,18 @@ jobs:
         with:
           python-version: "3.11"
       - name: Compile
-        run: python -m py_compile ur_agentic/*.py tests/test_pipeline.py
+        run: python -m py_compile agentic_sim2real/*.py tests/test_pipeline.py
       - name: Unit tests
         run: PYTHONPATH=. python -m unittest discover -s tests
       - name: Prepare real-data example
-        run: PYTHONPATH=. python -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json prepare-real-data --session embodiments/manipulator/ur10e_gear_assembly/real_data/example_session --out /tmp/ur_real_records.jsonl
+        run: PYTHONPATH=. python -m agentic_sim2real.cli --config configs/ur10e_gear_assembly.example.json prepare-real-data --session embodiments/manipulator/ur10e_gear_assembly/real_data/example_session --out /tmp/agentic_sim2real_real_records.jsonl
       - name: Skill manifest validation
-        run: PYTHONPATH=. python -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json validate-skills --root .
+        run: PYTHONPATH=. python -m agentic_sim2real.cli --config configs/ur10e_gear_assembly.example.json validate-skills --root .
       - name: Skill harness golden run
-        run: PYTHONPATH=. python -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json run-harness --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/ur_gear_harness
+        run: PYTHONPATH=. python -m agentic_sim2real.cli --config configs/ur10e_gear_assembly.example.json run-harness --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/agentic_sim2real_harness
       - name: Custom skill override run
-        run: PYTHONPATH=. python -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json run-harness --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/ur_custom_skill_harness --skill-dir examples/custom_skills --skill env_preflight
+        run: PYTHONPATH=. python -m agentic_sim2real.cli --config configs/ur10e_gear_assembly.example.json run-harness --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/agentic_sim2real_custom_skill_harness --skill-dir examples/custom_skills --skill env_preflight
       - name: Evaluation loop golden run
-        run: PYTHONPATH=. python -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json run-evaluation-loop --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/ur_gear_eval
+        run: PYTHONPATH=. python -m agentic_sim2real.cli --config configs/ur10e_gear_assembly.example.json run-evaluation-loop --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/agentic_sim2real_eval
       - name: Shell syntax
         run: bash -n scripts/*.sh

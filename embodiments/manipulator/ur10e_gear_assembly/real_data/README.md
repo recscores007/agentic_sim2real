@@ -103,9 +103,9 @@ The converter creates JSONL rows like:
 That is the format consumed by:
 
 ```bash
-ur-gear-agentic analyze --dataset embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name> --out outputs/<session_name>
-ur-gear-agentic run-harness --dataset embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name> --out outputs/<session_name>_harness
-ur-gear-agentic run-evaluation-loop --dataset embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name> --out outputs/<session_name>_eval
+agentic-sim2real analyze --dataset embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name> --out outputs/<session_name>
+agentic-sim2real run-harness --dataset embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name> --out outputs/<session_name>_harness
+agentic-sim2real run-evaluation-loop --dataset embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name> --out outputs/<session_name>_eval
 ```
 
 ## Templates

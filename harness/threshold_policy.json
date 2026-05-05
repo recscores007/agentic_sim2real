@@ -1,12 +1,12 @@
 {
-  "policy_version": "ur_gear_eval_v1",
+  "policy_version": "agentic_sim2real_eval_v1",
   "hard_safety_thresholds": {
     "safe_to_autorun_robot": false,
-    "real_robot_gate_env": "I_ACCEPT_UR_REAL_ROBOT_RISK",
+    "real_robot_gate_env": "I_ACCEPT_AGENTIC_SIM2REAL_REAL_ROBOT_RISK",
     "real_robot_gate_value": "yes",
     "max_contact_force_n": 80.0
   },
-  "tutorial_spec_thresholds": {
+  "embodiment_spec_thresholds": {
     "pose_error_gate_m": 0.01,
     "control_rate_hz": 30.0,
     "nominal_action_scale_2f140": 0.0325,

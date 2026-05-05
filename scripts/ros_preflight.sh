@@ -11,7 +11,7 @@ echo "ROS_DOMAIN_ID=${ROS_DOMAIN_ID}"
 echo "RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION}"
 echo
 echo "Checking key ROS tools:"
-python3 -m ur_agentic.cli --config "${UR_GEAR_CONFIG}" preflight
+python3 -m agentic_sim2real.cli --config "${AGENTIC_SIM2REAL_CONFIG}" preflight
 echo
 echo "Manual-on-robot tests recommended by the tutorial:"
 echo "  export ENABLE_MANIPULATOR_TESTING=manual_on_robot"

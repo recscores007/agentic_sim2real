@@ -172,7 +172,7 @@ def release_gate_decides(scoreboard: dict[str, Any], critique: dict[str, Any], o
 
 
 def human_approves_hardware(config: Any, include_real: bool, out: Path) -> dict[str, Any]:
-    key = str(config.safety.get("real_robot_gate_env", "I_ACCEPT_UR_REAL_ROBOT_RISK"))
+    key = str(config.safety.get("real_robot_gate_env", "I_ACCEPT_AGENTIC_SIM2REAL_REAL_ROBOT_RISK"))
     expected = str(config.safety.get("real_robot_gate_value", "yes"))
     actual = os.environ.get(key)
     approved = bool(include_real and actual == expected)
