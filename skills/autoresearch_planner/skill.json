@@ -2,7 +2,8 @@
   "depends_on": [
     "domain_randomization_update",
     "action_scale_sweep",
-    "newton_sysid"
+    "newton_sysid",
+    "pace_sysid"
   ],
   "description": "Generate hypotheses and rank experiments from the measured sim-real gaps.",
   "human_required": false,

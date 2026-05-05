@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +12,8 @@ from .config import PipelineConfig, choose_task, load_config, nominal_action_sca
 from .data_quality import evaluate_real_data_quality
 from .dataset import load_records
 from .newton_bridge import run_newton_bridge
+from .pace_bridge import run_pace_bridge
+from .preflight import run_preflight
 from .real_data import ensure_aligned_dataset
 from .safety import require_real_robot_gate
 from .sysid import estimate_gap
@@ -500,14 +501,10 @@ def _impl_env_preflight(
     skill_out: Path,
     previous: dict[str, SkillResult],
 ) -> SkillResult:
-    checks = {}
-    for command in ["python3", "ros2", "launch_test", "rqt_image_view"]:
-        checks[command] = shutil.which(command)
-    failures = []
-    if not checks["python3"]:
-        failures.append("python3 is required")
-    warnings = [f"{cmd} not found; hardware/runtime step will need Isaac ROS environment" for cmd, path in checks.items() if not path and cmd != "python3"]
-    evidence = _write_json(skill_out / "preflight.json", {"commands": checks, "warnings": warnings})
+    report = run_preflight(ctx.config, root=ctx.root)
+    failures = [str(item) for item in report.get("failures", [])]
+    warnings = [str(item) for item in report.get("warnings", [])]
+    evidence = _write_json(skill_out / "preflight.json", report)
     return SkillResult(
         skill_id=manifest.skill_id,
         status="fail" if failures else "pass",
@@ -516,7 +513,12 @@ def _impl_env_preflight(
         blocking_failures=failures,
         warnings=warnings,
         evidence_files=[evidence],
-        metrics={"required_commands_present": not failures},
+        metrics={
+            "required_commands_present": not any("python3" in failure for failure in failures),
+            "newton_available": bool(report["sysid_backends"]["newton"]["available"]),
+            "pace_available": bool(report["sysid_backends"]["pace"]["available"]),
+            "local_sysid_available": True,
+        },
     )
 
 
@@ -751,7 +753,7 @@ def _impl_newton_sysid(
             message = f"Built-in Newton bridge could not complete: {exc}"
             evidence = _write_json(log_path, {"error": str(exc), "input_file": str(input_path)})
             return _newton_unavailable_result(manifest.skill_id, required, message, evidence)
-        return _newton_result_from_payload(
+        return _sysid_backend_result_from_payload(
             manifest.skill_id,
             payload,
             sysid_cfg,
@@ -808,7 +810,7 @@ def _impl_newton_sysid(
         message = f"Newton SysID result could not be parsed: {exc}"
         return _newton_unavailable_result(manifest.skill_id, required, message, log_evidence)
 
-    return _newton_result_from_payload(
+    return _sysid_backend_result_from_payload(
         manifest.skill_id,
         payload,
         sysid_cfg,
@@ -819,6 +821,16 @@ def _impl_newton_sysid(
 
 
 def _newton_unavailable_result(skill_id: str, required: bool, message: str, evidence: str) -> SkillResult:
+    return _sysid_unavailable_result(skill_id, required, message, evidence, backend_key="newton_available")
+
+
+def _sysid_unavailable_result(
+    skill_id: str,
+    required: bool,
+    message: str,
+    evidence: str,
+    backend_key: str,
+) -> SkillResult:
     return SkillResult(
         skill_id=skill_id,
         status="fail" if required else "skip",
@@ -827,17 +839,19 @@ def _newton_unavailable_result(skill_id: str, required: bool, message: str, evid
         blocking_failures=[message] if required else [],
         warnings=[] if required else [message],
         evidence_files=[evidence],
-        metrics={"newton_available": False, "fallback_skill": "sysid_step_response"},
+        metrics={backend_key: False, "fallback_skill": "sysid_step_response"},
     )
 
 
-def _newton_result_from_payload(
+def _sysid_backend_result_from_payload(
     skill_id: str,
     payload: dict[str, Any],
     sysid_cfg: dict[str, Any],
     required: bool,
     skill_out: Path,
     extra_evidence: list[str] | None = None,
+    min_confidence_key: str = "min_newton_confidence",
+    backend_label: str = "Newton SysID",
 ) -> SkillResult:
     confidence = float(payload.get("confidence", payload.get("metrics", {}).get("confidence", 0.0)))
     payload_status = str(payload.get("status", "pass")).lower()
@@ -848,11 +862,11 @@ def _newton_result_from_payload(
     if payload_status == "fail" and not failures and payload.get("reason"):
         failures.append(str(payload["reason"]))
     if required and payload_status == "skip":
-        failures.append("Newton SysID is required but the Newton payload skipped")
+        failures.append(f"{backend_label} is required but the payload skipped")
     if payload_status != "skip":
-        min_confidence = float(sysid_cfg.get("min_newton_confidence", 0.6))
+        min_confidence = float(sysid_cfg.get(min_confidence_key, 0.6))
         if confidence < min_confidence:
-            failures.append(f"Newton SysID confidence {confidence:.3f} below required {min_confidence:.3f}")
+            failures.append(f"{backend_label} confidence {confidence:.3f} below required {min_confidence:.3f}")
 
     if failures or payload_status == "fail":
         status = "fail"
@@ -861,7 +875,7 @@ def _newton_result_from_payload(
     else:
         status = "pass"
 
-    evidence = _write_json(skill_out / "newton_sysid.json", payload)
+    evidence = _write_json(skill_out / f"{skill_id}.json", payload)
     evidence_files = [evidence]
     evidence_files.extend(extra_evidence or [])
     evidence_files.extend(str(item) for item in payload.get("evidence_files", []))
@@ -877,6 +891,92 @@ def _newton_result_from_payload(
         evidence_files=deduped_evidence,
         metrics=dict(payload.get("metrics", {})),
     )
+
+
+def _impl_pace_sysid(
+    manifest: SkillManifest,
+    ctx: HarnessContext,
+    skill_out: Path,
+    previous: dict[str, SkillResult],
+) -> SkillResult:
+    sysid_cfg = ctx.config.sysid
+    required = bool(sysid_cfg.get("require_pace", False))
+    preference = [str(item) for item in sysid_cfg.get("sysid_backend_preference", ["newton", "pace", "local"])]
+    newton = previous.get("newton_sysid")
+    if newton and newton.status == "pass" and _prefers_newton(preference):
+        evidence = _write_json(
+            skill_out / "pace_sysid.json",
+            {
+                "status": "skip",
+                "reason": "Newton SysID passed and is preferred ahead of PACE.",
+                "fallback_skill": "newton_sysid",
+            },
+        )
+        return SkillResult(
+            skill_id=manifest.skill_id,
+            status="skip",
+            quality_score=1.0,
+            confidence=1.0,
+            warnings=["PACE backup skipped because Newton SysID passed"],
+            evidence_files=[evidence],
+            metrics={"pace_enabled": False, "fallback_skill": "newton_sysid"},
+        )
+
+    command = [str(item) for item in sysid_cfg.get("pace_command", [])]
+    pace_root = str(sysid_cfg.get("pace_root") or os.environ.get("PACE_SIM2REAL_ROOT", ""))
+    enabled = bool(sysid_cfg.get("pace_enabled", False) or command or pace_root)
+    input_path = skill_out / "pace_input.json"
+    output_path = skill_out / "pace_output.json"
+    input_payload = {
+        "dataset": str(ctx.dataset),
+        "config": ctx.config.merged(),
+        "root": str(ctx.root),
+        "pace_root": pace_root,
+        "previous_results": {skill_id: result.to_dict() for skill_id, result in previous.items()},
+        "expected_output_json": str(output_path),
+    }
+    input_path.write_text(json.dumps(input_payload, indent=2, sort_keys=True) + "\n")
+
+    if not enabled:
+        reason = "PACE backup SysID is not enabled; local log-based SysID remains the fallback when Newton is unavailable."
+        evidence = _write_json(
+            skill_out / "pace_sysid.json",
+            {"status": "skip", "reason": reason, "fallback_skill": "sysid_step_response", "input_file": str(input_path)},
+        )
+        return SkillResult(
+            skill_id=manifest.skill_id,
+            status="skip",
+            quality_score=1.0,
+            confidence=1.0,
+            warnings=["PACE backup skipped; set sysid.pace_enabled plus sysid.pace_root or sysid.pace_command to enable it"],
+            evidence_files=[evidence],
+            metrics={"pace_enabled": False, "fallback_skill": "sysid_step_response"},
+        )
+
+    try:
+        payload = run_pace_bridge(input_payload, work_dir=skill_out, output_path=output_path)
+    except Exception as exc:
+        message = f"PACE backup bridge could not complete: {exc}"
+        evidence = _write_json(skill_out / "pace_command_log.json", {"error": str(exc), "input_file": str(input_path)})
+        return _sysid_unavailable_result(manifest.skill_id, required, message, evidence, backend_key="pace_available")
+    return _sysid_backend_result_from_payload(
+        manifest.skill_id,
+        payload,
+        sysid_cfg,
+        required,
+        skill_out,
+        extra_evidence=[str(output_path)] if output_path.exists() else [],
+        min_confidence_key="min_pace_confidence",
+        backend_label="PACE SysID",
+    )
+
+
+def _prefers_newton(preference: list[str]) -> bool:
+    if "newton" not in preference:
+        return False
+    if "pace" not in preference:
+        return True
+    return preference.index("newton") < preference.index("pace")
 
 
 def _impl_domain_randomization_update(
@@ -1065,6 +1165,7 @@ IMPLEMENTATIONS: dict[str, Callable[[SkillManifest, HarnessContext, Path, dict[s
     "pose_repeatability": _impl_pose_repeatability,
     "sysid_step_response": _impl_sysid_step_response,
     "newton_sysid": _impl_newton_sysid,
+    "pace_sysid": _impl_pace_sysid,
     "domain_randomization_update": _impl_domain_randomization_update,
     "action_scale_sweep": _impl_action_scale_sweep,
     "autoresearch_planner": _impl_autoresearch_planner,

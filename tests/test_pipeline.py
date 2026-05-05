@@ -12,6 +12,7 @@ from agentic_sim2real.data_quality import evaluate_real_data_quality
 from agentic_sim2real.dataset import load_records
 from agentic_sim2real.embodiments import validate_embodiments
 from agentic_sim2real.evaluation_loop import run_evaluation_loop
+from agentic_sim2real.preflight import run_preflight
 from agentic_sim2real.real_data import inspect_real_session, prepare_real_session
 from agentic_sim2real.skill_harness import run_harness, validate_all_manifests
 from agentic_sim2real.sysid import estimate_gap
@@ -71,6 +72,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("autoresearch_planner", result["skills"])
         self.assertIn("real_data_quality_gate", result["skills"])
         self.assertIn("newton_sysid", result["skills"])
+        self.assertIn("pace_sysid", result["skills"])
 
     def test_harness_writes_scoreboard(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -83,8 +85,25 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(scoreboard["status"], "pass")
             self.assertIn("real_data_quality_gate", scoreboard["skills"])
             self.assertEqual(scoreboard["skills"]["newton_sysid"]["status"], "skip")
+            self.assertEqual(scoreboard["skills"]["pace_sysid"]["status"], "skip")
             self.assertIn("release_candidate_gate", scoreboard["skills"])
             self.assertTrue((Path(tmp) / "scoreboard.json").exists())
+
+    def test_stronger_preflight_reports_sysid_backends(self) -> None:
+        cfg = load_config(ROOT / "configs" / "ur10e_gear_assembly.example.json")
+        report = run_preflight(cfg, root=ROOT)
+        self.assertEqual(report["status"], "pass")
+        self.assertIn("newton", report["sysid_backends"])
+        self.assertIn("pace", report["sysid_backends"])
+        self.assertTrue(report["sysid_backends"]["local"]["available"])
+
+        cfg_with_pace_command = load_config(ROOT / "configs" / "ur10e_gear_assembly.example.json")
+        cfg_with_pace_command.sysid["pace_enabled"] = True
+        cfg_with_pace_command.sysid["pace_command"] = ["python3", "custom_pace_adapter.py"]
+        command_report = run_preflight(cfg_with_pace_command, root=ROOT)
+        self.assertEqual(command_report["status"], "pass")
+        self.assertTrue(command_report["sysid_backends"]["pace"]["available"])
+        self.assertTrue(command_report["sysid_backends"]["pace"]["command_configured"])
 
     def test_custom_command_skill_overrides_builtin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -253,6 +272,46 @@ class PipelineTests(unittest.TestCase):
             result = scoreboard["skills"]["newton_sysid"]
             self.assertEqual(result["status"], "pass")
             self.assertTrue(result["metrics"]["newton_fit_used"])
+
+    def test_pace_sysid_command_adapter_runs_as_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            runner = tmp_path / "fake_pace.py"
+            runner.write_text(
+                "\n".join(
+                    [
+                        "import json",
+                        "import os",
+                        "from pathlib import Path",
+                        "summary = json.loads(Path(os.environ['AGENTIC_SIM2REAL_PACE_INPUT_JSON']).read_text())",
+                        "assert summary['records'] >= 3",
+                        "Path(os.environ.get('AGENTIC_SIM2REAL_SKILL_OUTPUT_JSON', os.environ.get('AGENTIC_SIM2REAL_PACE_OUTPUT_JSON', 'pace_output.json'))).write_text(json.dumps({",
+                        "    'status': 'pass',",
+                        "    'confidence': 0.81,",
+                        "    'quality_score': 0.84,",
+                        "    'metrics': {'pace_fit_used': True, 'records': summary['records']},",
+                        "    'fitted_parameters': {'pace_delay_steps': 2},",
+                        "}) + '\\n')",
+                    ]
+                )
+                + "\n"
+            )
+            config = json.loads((ROOT / "configs" / "ur10e_gear_assembly.example.json").read_text())
+            config["sysid"]["pace_enabled"] = True
+            config["sysid"]["pace_command"] = ["python3", str(runner)]
+            config["sysid"]["min_pace_records"] = 3
+            config_path = tmp_path / "config.json"
+            config_path.write_text(json.dumps(config) + "\n")
+            scoreboard = run_harness(
+                root=ROOT,
+                config_path=config_path,
+                dataset_path=ROOT / "embodiments" / "manipulator" / "ur10e_gear_assembly" / "real_data" / "example_session",
+                out_dir=tmp_path / "out",
+                only_skill="pace_sysid",
+            )
+            result = scoreboard["skills"]["pace_sysid"]
+            self.assertEqual(result["status"], "pass")
+            self.assertTrue(result["metrics"]["pace_fit_used"])
 
     def test_prepare_generic_object_pose_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

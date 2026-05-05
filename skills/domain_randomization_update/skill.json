@@ -1,7 +1,8 @@
 {
   "depends_on": [
     "sysid_step_response",
-    "newton_sysid"
+    "newton_sysid",
+    "pace_sysid"
   ],
   "description": "Convert measured sim-real gaps into bounded domain-randomization candidate updates.",
   "human_required": false,

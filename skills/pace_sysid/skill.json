@@ -1,0 +1,21 @@
+{
+  "id": "pace_sysid",
+  "name": "PACE Backup SysID Adapter",
+  "owner_agent": "sysid_agent",
+  "description": "Optional backup SysID boundary for leggedrobotics/pace-sim2real when Newton is unavailable or not preferred.",
+  "implementation": "pace_sysid",
+  "depends_on": ["sysid_step_response", "newton_sysid"],
+  "inputs": ["aligned_records", "config.sysid", "newton_sysid_result", "previous_sysid_result"],
+  "outputs": ["pace_sysid.json", "pace_output.json", "pace_input_summary.json", "result.json"],
+  "validators": [
+    "PACE must consume portable commanded/measured joint-position records or a configured custom pace_command",
+    "PACE is a backup backend and should skip when Newton passes and is preferred",
+    "PACE fit.py is task-config driven, so a matching PACE task/data_dir or custom command is required",
+    "local log-based SysID remains the fallback when neither Newton nor PACE is configured",
+    "if config.sysid.require_pace is true, missing or low-confidence PACE output must fail"
+  ],
+  "quality_gate": {"min_score": 0.6},
+  "human_required": false,
+  "release_blocking": false,
+  "real_robot": false
+}

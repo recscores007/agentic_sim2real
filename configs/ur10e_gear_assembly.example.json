@@ -40,6 +40,7 @@
     "precision_task": true
   },
   "sysid": {
+    "sysid_backend_preference": ["newton", "pace", "local"],
     "newton_enabled": false,
     "require_newton": false,
     "newton_root": "",
@@ -70,7 +71,19 @@
     "newton_control_freq_hz": 500,
     "newton_physics_freq_hz": 500,
     "newton_timeout_s": 900,
-    "min_newton_confidence": 0.6
+    "min_newton_confidence": 0.6,
+    "pace_enabled": false,
+    "require_pace": false,
+    "pace_root": "",
+    "pace_command": [],
+    "pace_task": "",
+    "pace_robot_name": "",
+    "pace_data_dir": "",
+    "pace_run_mode": "run",
+    "min_pace_records": 5,
+    "pace_num_envs": 4096,
+    "pace_timeout_s": 1800,
+    "min_pace_confidence": 0.6
   },
   "safety": {
     "require_human_gate": true,

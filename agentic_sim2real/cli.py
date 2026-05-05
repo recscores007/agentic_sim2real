@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 
 from .autoresearch import build_plan
@@ -10,6 +9,7 @@ from .config import PipelineConfig, choose_task, command_env, load_config
 from .dataset import load_records
 from .embodiments import validate_embodiments
 from .evaluation_loop import run_evaluation_loop
+from .preflight import run_preflight
 from .real_data import ensure_aligned_dataset, inspect_real_session, prepare_real_session
 from .report import write_outputs
 from .safety import require_real_robot_gate
@@ -22,7 +22,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", default="configs/ur10e_gear_assembly.example.json")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("preflight", help="Check local command availability")
+    preflight = sub.add_parser("preflight", help="Check local command availability and runtime configuration")
+    preflight.add_argument("--root", default=".")
     sub.add_parser("commands", help="Print tutorial-aligned Isaac Lab and Isaac ROS commands")
     list_skills = sub.add_parser("list-skills", help="List atomic skills and owning agents")
     list_skills.add_argument("--root", default=".")
@@ -73,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(args.config)
 
     if args.cmd == "preflight":
-        return cmd_preflight(config)
+        return cmd_preflight(config, args.root)
     if args.cmd == "commands":
         return cmd_commands(config)
     if args.cmd == "list-skills":
@@ -107,20 +108,23 @@ def main(argv: list[str] | None = None) -> int:
     raise AssertionError(args.cmd)
 
 
-def cmd_preflight(config: PipelineConfig) -> int:
-    commands = ["python3", "ros2", "launch_test", "rqt_image_view"]
-    print("Preflight checks")
-    failed = False
-    for command in commands:
-        found = shutil.which(command)
-        status = "ok" if found else "missing"
-        print(f"- {command}: {status}{' (' + found + ')' if found else ''}")
-        if command == "python3":
-            failed = failed or not found
-    print(f"- selected Isaac Lab task: {choose_task(config)}")
-    print(f"- ROS_DOMAIN_ID: {config.isaac_ros['ros_domain_id']}")
-    print(f"- RMW_IMPLEMENTATION: {config.isaac_ros['rmw_implementation']}")
-    return 1 if failed else 0
+def cmd_preflight(config: PipelineConfig, root: str = ".") -> int:
+    report = run_preflight(config, root=root)
+    print(f"Preflight checks: {report['status']}")
+    print(f"- selected Isaac Lab task: {report['selected_isaac_lab_task']}")
+    print(f"- ROS_DOMAIN_ID: {report['isaac_ros']['ros_domain_id']}")
+    print(f"- RMW_IMPLEMENTATION: {report['isaac_ros']['rmw_implementation']}")
+    print()
+    for check in report["checks"]:
+        label = {"pass": "ok", "warn": "warn", "fail": "fail"}[check["status"]]
+        suffix = f" ({check['path']})" if check.get("path") else ""
+        print(f"- [{label}] {check['category']}.{check['name']}: {check['message']}{suffix}")
+    if report["recommendations"]:
+        print()
+        print("Recommendations:")
+        for item in report["recommendations"]:
+            print(f"- {item}")
+    return 0 if report["status"] == "pass" else 1
 
 
 def cmd_commands(config: PipelineConfig) -> int:

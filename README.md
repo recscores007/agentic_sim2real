@@ -90,8 +90,9 @@ Current SysID status:
 | Can the offline pipeline autorun from an embodiment real-data session? | Yes. If `aligned/records.jsonl` is present it is used directly; if CSV subfolders are present the harness auto-prepares aligned records. |
 | Can it autorun a physical robot with no human? | No. Hardware is intentionally human-gated. |
 | Is SysID currently using IsaacLab-Newton from `es-rl/IsaacLab-Newton`? | Not by default. The local estimator in `agentic_sim2real/sysid.py` runs by default. When `config.sysid.newton_enabled=true`, the portable `newton_sysid` skill uses the built-in Newton bridge or a custom `newton_command`. |
+| What if IsaacLab-Newton is not installed? | Configure `pace_sysid` as a backup with `sysid.pace_enabled=true` and `sysid.pace_root=/path/to/pace-sim2real`, or keep using the local log-based fallback. |
 | What does current SysID estimate? | Delay, stiction/deadband proxy, contact summary, pose noise, reset scatter, action-scale bounds, and domain-randomization recommendations. |
-| Where does Newton SysID fit? | `skills/newton_sysid` converts canonical aligned records to IsaacLab-Newton SAGE CSVs, optionally runs `scripts/sysid/run_sysid.py`, parses `best_params.yaml`, and remains optional unless `config.sysid.require_newton=true`. |
+| Where do physics SysID backends fit? | `newton_sysid` converts canonical records to IsaacLab-Newton SAGE CSVs. `pace_sysid` converts canonical records to PACE `time`/`dof_pos`/`des_dof_pos` data and can run a configured PACE command. Both remain optional unless required in config. |
 
 ## Skill Portability Direction
 
@@ -119,6 +120,7 @@ Current skills are useful because they map to generic release questions:
 | `pose_repeatability` | Perception repeatability | Any vision or state-estimation pipeline needs measured repeatability. |
 | `sysid_step_response` | System identification evidence | Any sim2real transfer needs actuator, latency, friction, and contact evidence. |
 | `newton_sysid` | Optional physics SysID adapter | Newton fitting should be a portable skill that consumes canonical records, not robot-specific raw logs. |
+| `pace_sysid` | Optional backup physics SysID adapter | PACE can back up Newton when a PACE-compatible task/config or custom command is provided. |
 | `domain_randomization_update` | Sim parameter proposal | Any sim2real pipeline needs bounded randomization updates from data. |
 | `action_scale_sweep` | Controller/action range validation | Any policy deployment needs action scaling and saturation checks. |
 | `autoresearch_planner` | Experiment proposal and ranking | The self-improvement loop should be task-agnostic. |
@@ -240,6 +242,7 @@ skills/                         Atomic skill contracts
   pose_repeatability/skill.json
   sysid_step_response/skill.json
   newton_sysid/skill.json
+  pace_sysid/skill.json
   domain_randomization_update/skill.json
   action_scale_sweep/skill.json
   autoresearch_planner/skill.json
@@ -297,6 +300,7 @@ release gate decides whether the whole chain is good enough for human review.
 | `pose_repeatability` | `perception_agent` | Validate object pose error under the configured gate | Yes |
 | `sysid_step_response` | `sysid_agent` | Estimate delay, stiction, contact, SysID targets | Yes |
 | `newton_sysid` | `sysid_agent` | Optionally run IsaacLab-Newton fitting from canonical records | No, unless required in config |
+| `pace_sysid` | `sysid_agent` | Optional PACE backup SysID when Newton is unavailable | No, unless required in config |
 | `domain_randomization_update` | `dr_agent` | Propose bounded DR updates | Yes |
 | `action_scale_sweep` | `sysid_agent` | Propose safe action-scale candidates | Yes |
 | `autoresearch_planner` | `autoresearch_agent` | Generate and rank experiments | Yes |
@@ -616,6 +620,57 @@ PYTHONPATH=. python3 scripts/newton/run_newton_sysid_bridge.py \
   --prepare-only
 ```
 
+If IsaacLab-Newton is not installed, PACE can be configured as the next SysID
+backend. PACE is task-config driven: its public `scripts/pace/fit.py` expects a
+PACE-compatible Isaac Lab task whose `env_cfg.sim2real.data_dir` points to the
+same data file the bridge writes. For non-legged or custom embodiments, provide a
+matching PACE task/config or a custom `pace_command`.
+
+```json
+{
+  "sysid": {
+    "sysid_backend_preference": ["newton", "pace", "local"],
+    "pace_enabled": true,
+    "require_pace": false,
+    "pace_root": "/path/to/pace-sim2real",
+    "pace_task": "Isaac-Pace-YourRobot-v0",
+    "pace_robot_name": "your_robot",
+    "pace_data_dir": "your_robot/chirp_data.pt",
+    "pace_run_mode": "run",
+    "min_pace_records": 5,
+    "pace_num_envs": 4096
+  }
+}
+```
+
+If the public PACE task does not match your embodiment, keep `pace_enabled=false`
+or set a custom command. The command receives `{input}` as the prepared PACE
+input summary JSON, `{data_file}` as the generated `.pt` file, `{dataset}` as
+the original real-data session, and `{output}` as the expected result JSON.
+
+```json
+{
+  "sysid": {
+    "pace_enabled": true,
+    "pace_command": [
+      "python3",
+      "path/to/your_pace_adapter.py",
+      "--input",
+      "{input}",
+      "--data-file",
+      "{data_file}",
+      "--output",
+      "{output}"
+    ]
+  }
+}
+```
+
+The preflight report now calls out which SysID backends are available:
+Newton, PACE, and the local fallback. For PACE it also checks whether the repo
+entrypoint exists, whether a custom command is configured, and whether the
+default PACE path has both `pace_task` and `pace_data_dir`.
+
 ### 2. List the skills
 
 ```bash
@@ -789,6 +844,11 @@ artifact bundle or replace the golden sample with your release candidate.
 ```bash
 ./scripts/ros_preflight.sh
 ```
+
+This checks command availability (`python3`, ROS tools, `git`, GPU utility when
+present), repo structure, Isaac Lab root/script paths, Isaac ROS workspace and
+deployment config, ROS middleware settings, and SysID backend availability
+(`newton`, `pace`, `local`).
 
 Before insertion, run the tutorial's manual-on-robot validation:
 
