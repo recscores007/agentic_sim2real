@@ -8,6 +8,7 @@ import sys
 from .autoresearch import build_plan
 from .config import PipelineConfig, choose_task, command_env, load_config
 from .dataset import load_records
+from .embodiments import validate_embodiments
 from .evaluation_loop import run_evaluation_loop
 from .real_data import prepare_real_session
 from .report import write_outputs
@@ -30,6 +31,9 @@ def main(argv: list[str] | None = None) -> int:
     validate_skills = sub.add_parser("validate-skills", help="Validate every skill manifest")
     validate_skills.add_argument("--root", default=".")
     validate_skills.add_argument("--skill-dir", action="append", default=[], help="Overlay directory with replacement skills")
+
+    validate_embodiments_cmd = sub.add_parser("validate-embodiments", help="Validate embodiment manifests and real-data scaffold structure")
+    validate_embodiments_cmd.add_argument("--root", default=".")
 
     analyze = sub.add_parser("analyze", help="Analyze recorded real logs offline")
     analyze.add_argument("--dataset", required=True)
@@ -69,6 +73,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_list_skills(args.root, args.skill_dir)
     if args.cmd == "validate-skills":
         return cmd_validate_skills(args.root, args.skill_dir)
+    if args.cmd == "validate-embodiments":
+        return cmd_validate_embodiments(args.root)
     if args.cmd == "analyze":
         return cmd_analyze(config, args.dataset, args.out)
     if args.cmd == "prepare-real-data":
@@ -157,6 +163,12 @@ def cmd_list_skills(root: str, skill_dirs: list[str]) -> int:
 
 def cmd_validate_skills(root: str, skill_dirs: list[str]) -> int:
     result = validate_all_manifests(root, skill_dirs=skill_dirs)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0 if result["status"] == "pass" else 1
+
+
+def cmd_validate_embodiments(root: str) -> int:
+    result = validate_embodiments(root)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["status"] == "pass" else 1
 

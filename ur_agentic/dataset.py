@@ -15,12 +15,20 @@ class Record:
     joint_state: list[float]
     joint_velocity: list[float]
     ee_pose: list[float]
-    shaft_pose_estimate: list[float]
-    shaft_pose_reference: list[float]
+    object_pose_estimate: list[float]
+    object_pose_reference: list[float]
     contact_force: float | None = None
     success: bool | None = None
     failure_mode: str | None = None
     raw: dict[str, Any] | None = None
+
+    @property
+    def shaft_pose_estimate(self) -> list[float]:
+        return self.object_pose_estimate
+
+    @property
+    def shaft_pose_reference(self) -> list[float]:
+        return self.object_pose_reference
 
 
 def load_records(path: str | Path) -> list[Record]:
@@ -91,29 +99,29 @@ def _normalize(row: dict[str, Any]) -> Record:
     joint_state = _vector(_first(row, "joint_state", "joint_pos", "joint_positions", "state", default=[]))
     joint_velocity = _vector(_first(row, "joint_velocity", "joint_vel", "joint_velocities", default=[]))
     ee_pose = _vector(_first(row, "ee_pose", "tcp_pose", "wrist_pose", default=[]))
-    shaft_est = _vector(
+    object_est = _vector(
         _first(
             row,
+            "object_pose_estimate",
+            "object_pose",
+            "target_pose_estimate",
             "shaft_pose_estimate",
             "gear_shaft_pose_estimate",
             "gear_shaft_pose",
             "shaft_pose",
-            "object_pose_estimate",
-            "object_pose",
-            "target_pose_estimate",
             default=[],
         )
     )
-    shaft_ref = _vector(
+    object_ref = _vector(
         _first(
             row,
+            "object_pose_reference",
+            "object_pose_ground_truth",
+            "target_pose_reference",
             "shaft_pose_reference",
             "shaft_pose_ground_truth",
             "shaft_pose_measured",
             "gear_shaft_pose_reference",
-            "object_pose_reference",
-            "object_pose_ground_truth",
-            "target_pose_reference",
             default=[],
         )
     )
@@ -133,8 +141,8 @@ def _normalize(row: dict[str, Any]) -> Record:
         joint_state=joint_state,
         joint_velocity=joint_velocity,
         ee_pose=ee_pose,
-        shaft_pose_estimate=shaft_est,
-        shaft_pose_reference=shaft_ref,
+        object_pose_estimate=object_est,
+        object_pose_reference=object_ref,
         contact_force=contact_force,
         success=success,
         failure_mode=str(failure_mode) if failure_mode not in (None, "") else None,

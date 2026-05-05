@@ -1,0 +1,26 @@
+{
+  "description": "Portable starting point for fixed-base and arm-centric manipulation embodiments.",
+  "display_name": "Generic Manipulator",
+  "embodiment_type": "manipulator",
+  "hardware_gate": {
+    "required_for_real_robot": true,
+    "safe_to_autorun_robot": false
+  },
+  "id": "manipulator/generic_manipulator",
+  "name": "generic_manipulator",
+  "real_data": {
+    "accepted_pose_files": [
+      "object_pose.csv"
+    ],
+    "aligned_records": "real_data/example_session/aligned/records.jsonl",
+    "canonical_pose_file": "object_pose.csv",
+    "example_session": "real_data/example_session",
+    "templates": "real_data/templates"
+  },
+  "schema_version": "embodiment.v1",
+  "skills": {
+    "skill_override_policy": "Put embodiment-specific config and data here; replace skill implementations with --skill-dir or custom_skills when needed.",
+    "uses_root_skill_library": true
+  },
+  "status": "generic_scaffold"
+}

@@ -8,15 +8,6 @@ from typing import Any
 
 POSE_FILENAMES = ("object_pose.csv", "shaft_pose.csv")
 
-JOINT_NAMES = [
-    "shoulder_pan_joint",
-    "shoulder_lift_joint",
-    "elbow_joint",
-    "wrist_1_joint",
-    "wrist_2_joint",
-    "wrist_3_joint",
-]
-
 
 def prepare_real_session(
     session_dir: str | Path,
@@ -84,8 +75,6 @@ def prepare_real_session(
             "ee_pose": _pose_from_prefix(joint_row, "ee", optional=True),
             "object_pose_estimate": object_estimate,
             "object_pose_reference": object_reference,
-            "shaft_pose_estimate": object_estimate,
-            "shaft_pose_reference": object_reference,
             "contact_force": contact_force,
             "success": label.get("success"),
             "failure_mode": _clean_failure_mode(label.get("failure_mode")),
@@ -110,6 +99,7 @@ def prepare_real_session(
         "warnings": warnings,
         "required_pipeline_file": _display_path(out),
         "pose_file": _display_path(pose_path),
+        "record_pose_contract": "object_pose_estimate/object_pose_reference",
     }
     summary_path = out.parent / "prepare_summary.json"
     summary["summary_path"] = _display_path(summary_path)

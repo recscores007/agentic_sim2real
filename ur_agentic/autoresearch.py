@@ -10,11 +10,11 @@ def build_plan(gap: dict, config: PipelineConfig) -> dict:
     experiments = [
         {
             "id": "E1_perception_noise_replay",
-            "question": "Does measured FoundationPose/RealSense shaft-pose noise explain insertion misses?",
-            "agent_does": "Build Isaac Lab replay/sweep configs around measured gear_shaft_pos and gear_shaft_quat noise.",
+            "question": "Does measured object-pose noise explain task failures?",
+            "agent_does": "Build replay/sweep configs around measured object position and orientation noise.",
             "human_does": "Run or approve the real calibration/pose-repeatability test and label obvious camera failures.",
-            "parameter_change": recs["domain_randomization"]["shaft_pose_observation_noise"],
-            "promote_if": "held-out sim rollouts remain stable and predicted shaft-pose error is inside the 1 cm real gate",
+            "parameter_change": recs["domain_randomization"]["object_pose_observation_noise"],
+            "promote_if": "held-out sim rollouts remain stable and predicted object-pose error is inside the configured real gate",
         },
         {
             "id": "E2_robot_sysid_step_response",
@@ -26,10 +26,10 @@ def build_plan(gap: dict, config: PipelineConfig) -> dict:
         },
         {
             "id": "E3_reset_and_fixture_generalization",
-            "question": "Is the tutorial pose randomization enough for the real fixture scatter?",
-            "agent_does": "Compare measured reset scatter to base/gear pose randomization and propose range tightening or widening.",
-            "human_does": "Measure or log where the peg stand and gears are physically placed between trials.",
-            "parameter_change": recs["domain_randomization"]["base_and_gear_pose_randomization"],
+            "question": "Is pose randomization enough for real reset and fixture scatter?",
+            "agent_does": "Compare measured reset scatter to base/object pose randomization and propose range tightening or widening.",
+            "human_does": "Measure or log where the task object, fixture, or robot reset state lands between trials.",
+            "parameter_change": recs["domain_randomization"]["object_and_base_pose_randomization"],
             "promote_if": "real scatter is covered without making training unnecessarily broad",
         },
         {
@@ -72,7 +72,7 @@ def compute_transfer_score(gap: dict, config: PipelineConfig) -> dict:
     success_component = success_rate if success_rate is not None else 0.5
     delay_conf = float(gap["delay"].get("confidence", 0.0))
     deadband_conf = float(gap["deadband_stiction_proxy"].get("confidence", 0.0))
-    pose_samples = int(gap["shaft_pose_noise"].get("samples", 0) or 0)
+    pose_samples = int(gap["object_pose_noise"].get("samples", 0) or 0)
     pose_score = min(1.0, pose_samples / 20.0)
     contact_over = float(gap["contact"].get("over_limit_ratio", 0.0))
     contact_score = max(0.0, 1.0 - contact_over)

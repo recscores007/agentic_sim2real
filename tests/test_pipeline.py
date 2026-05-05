@@ -8,6 +8,7 @@ from pathlib import Path
 from ur_agentic.cli import main
 from ur_agentic.config import choose_task, load_config, nominal_action_scale
 from ur_agentic.dataset import load_records
+from ur_agentic.embodiments import validate_embodiments
 from ur_agentic.evaluation_loop import run_evaluation_loop
 from ur_agentic.real_data import prepare_real_session
 from ur_agentic.skill_harness import run_harness, validate_all_manifests
@@ -34,7 +35,9 @@ class PipelineTests(unittest.TestCase):
         records = load_records(ROOT / "sample_data" / "real_log_demo.jsonl")
         gap = estimate_gap(records, cfg)
         dr = gap["recommendations"]["domain_randomization"]
+        self.assertIn("object_pose_observation_noise", dr)
         self.assertIn("shaft_pose_observation_noise", dr)
+        self.assertIn("object_and_base_pose_randomization", dr)
         self.assertIn("base_and_gear_pose_randomization", dr)
         self.assertEqual(dr["actuator_and_contact_randomization"]["stiffness_scale_log_uniform"], [0.75, 1.5])
         self.assertGreaterEqual(gap["recommendations"]["action_scale"]["suggested"], 0.005)
@@ -185,6 +188,15 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(len(records[0].action), 6)
             self.assertGreater(len(records[0].shaft_pose_estimate), 0)
             self.assertIn("object_pose_estimate", records[0].raw or {})
+            self.assertNotIn("shaft_pose_estimate", records[0].raw or {})
+
+    def test_embodiment_scaffolds_validate(self) -> None:
+        result = validate_embodiments(ROOT)
+        self.assertEqual(result["status"], "pass")
+        self.assertIn("manipulator/ur10e_gear_assembly", result["embodiments"])
+        self.assertIn("manipulator/generic_manipulator", result["embodiments"])
+        self.assertIn("humanoid/generic_humanoid", result["embodiments"])
+        self.assertIn("mobile_manipulator/generic_mobile_manipulator", result["embodiments"])
 
 
 if __name__ == "__main__":

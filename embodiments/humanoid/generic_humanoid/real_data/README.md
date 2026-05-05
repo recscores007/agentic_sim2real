@@ -28,5 +28,4 @@ aligned/
   prepare_summary.json
 ```
 
-Use `object_pose.csv` for portable embodiments. Existing task-specific folders
-may keep a legacy object name such as `shaft_pose.csv`; the loader accepts both.
+Use `object_pose.csv` for portable embodiments. If an embodiment has a task-specific pose source name, declare that in its `embodiment.json` manifest.

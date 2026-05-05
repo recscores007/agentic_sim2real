@@ -412,10 +412,12 @@ pass/fail.
 
 ## Embodiment Folders
 
-Each embodiment uses the same portable scaffold:
+Each embodiment uses the same portable scaffold and has an `embodiment.json`
+manifest that the repo can validate:
 
 ```text
 embodiments/<embodiment_type>/<embodiment_name>/
+  embodiment.json
   configs/
   artifacts/
   evaluation/
@@ -424,7 +426,7 @@ embodiments/<embodiment_type>/<embodiment_name>/
     example_session/
 ```
 
-Current scaffolded embodiment classes:
+Current embodiments:
 
 - `embodiments/manipulator/generic_manipulator`
 - `embodiments/manipulator/ur10e_gear_assembly`
@@ -434,6 +436,12 @@ Current scaffolded embodiment classes:
 Use the generic folders as copyable starting points. Keep reusable agent skills
 at the repo root; put robot-specific data, config references, artifacts, and
 threshold notes inside the embodiment.
+
+Validate the scaffold contract:
+
+```bash
+./scripts/validate_embodiments.sh
+```
 
 ## Real Data Folder
 
@@ -474,8 +482,7 @@ embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>/
 Use the template:
 
 ```bash
-cp -R embodiments/manipulator/ur10e_gear_assembly/real_data/templates \
-  embodiments/manipulator/ur10e_gear_assembly/real_data/ur10e_day1
+cp -R embodiments/manipulator/ur10e_gear_assembly/real_data/templates   embodiments/manipulator/ur10e_gear_assembly/real_data/ur10e_day1
 ```
 
 Fill in:
@@ -489,8 +496,8 @@ Fill in:
 
 The UR tutorial still uses `pose_data/shaft_pose.csv` because the task object is
 the gear shaft. The loader accepts both `object_pose.csv` and `shaft_pose.csv`,
-so the same structure works for generic manipulators, humanoids, and mobile
-manipulators.
+and generated pipeline records use the portable `object_pose_estimate` and
+`object_pose_reference` fields.
 
 Convert raw subfolders into the pipeline format:
 

@@ -619,14 +619,14 @@ def _impl_pose_repeatability(
 ) -> SkillResult:
     records = load_records(ctx.dataset)
     gap = estimate_gap(records, ctx.config)
-    pose = gap["shaft_pose_noise"]
+    pose = gap.get("object_pose_noise", gap["shaft_pose_noise"])
     gate = float(ctx.config.perception.get("pose_error_gate_m", 0.01))
     p95 = pose.get("position_error_p95_m")
     failures = []
     if p95 is None:
-        failures.append("no shaft_pose_reference values available for pose repeatability")
+        failures.append("no object_pose_reference values available for pose repeatability")
     elif float(p95) > gate:
-        failures.append(f"shaft pose p95 error {p95} m exceeds gate {gate} m")
+        failures.append(f"object pose p95 error {p95} m exceeds gate {gate} m")
     if int(pose.get("samples", 0) or 0) < 10:
         failures.append("pose repeatability needs at least 10 samples")
     evidence = _write_json(skill_out / "pose_repeatability.json", pose)
@@ -684,7 +684,7 @@ def _impl_domain_randomization_update(
     gap = estimate_gap(load_records(ctx.dataset), ctx.config)
     dr = gap["recommendations"]["domain_randomization"]
     failures = []
-    pos_range = dr["shaft_pose_observation_noise"]["gear_shaft_pos_uniform_m"]
+    pos_range = dr.get("object_pose_observation_noise", dr["shaft_pose_observation_noise"]).get("object_position_uniform_m", dr["shaft_pose_observation_noise"]["gear_shaft_pos_uniform_m"])
     if max(abs(float(v)) for v in pos_range) > 0.01:
         failures.append("shaft pose noise recommendation exceeds 1 cm safety cap")
     friction = dr["actuator_and_contact_randomization"]["friction_sweep_for_agent_experiments"]
@@ -698,7 +698,7 @@ def _impl_domain_randomization_update(
         confidence=0.75,
         blocking_failures=failures,
         evidence_files=[evidence],
-        metrics={"shaft_pos_noise": pos_range, "friction_sweep": friction},
+        metrics={"object_pos_noise": pos_range, "friction_sweep": friction},
     )
 
 
@@ -769,7 +769,7 @@ def _impl_sim_eval_regression(
     candidate = {
         "success_rate": gap["summary"].get("success_rate") or 0.0,
         "peak_force_n": gap["contact"].get("peak_n") or 0.0,
-        "pose_error_p95_m": gap["shaft_pose_noise"].get("position_error_p95_m") or 1.0,
+        "pose_error_p95_m": gap.get("object_pose_noise", gap["shaft_pose_noise"]).get("position_error_p95_m") or 1.0,
     }
     failures = []
     if candidate["peak_force_n"] > float(ctx.config.safety.get("max_contact_force_n", 80.0)):

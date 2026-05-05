@@ -1,0 +1,27 @@
+{
+  "description": "Concrete manipulator embodiment for the Isaac Lab UR10e gear assembly tutorial.",
+  "display_name": "UR10e Gear Assembly",
+  "embodiment_type": "manipulator",
+  "hardware_gate": {
+    "required_for_real_robot": true,
+    "safe_to_autorun_robot": false
+  },
+  "id": "manipulator/ur10e_gear_assembly",
+  "name": "ur10e_gear_assembly",
+  "real_data": {
+    "accepted_pose_files": [
+      "object_pose.csv",
+      "shaft_pose.csv"
+    ],
+    "aligned_records": "real_data/example_session/aligned/records.jsonl",
+    "canonical_pose_file": "shaft_pose.csv",
+    "example_session": "real_data/example_session",
+    "templates": "real_data/templates"
+  },
+  "schema_version": "embodiment.v1",
+  "skills": {
+    "skill_override_policy": "Put embodiment-specific config and data here; replace skill implementations with --skill-dir or custom_skills when needed.",
+    "uses_root_skill_library": true
+  },
+  "status": "concrete_example"
+}

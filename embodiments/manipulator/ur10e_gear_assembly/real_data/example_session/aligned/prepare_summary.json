@@ -9,6 +9,7 @@
   "missing_pose_matches": 0,
   "out": "embodiments/manipulator/ur10e_gear_assembly/real_data/example_session/aligned/records.jsonl",
   "pose_file": "embodiments/manipulator/ur10e_gear_assembly/real_data/example_session/pose_data/shaft_pose.csv",
+  "record_pose_contract": "object_pose_estimate/object_pose_reference",
   "records": 12,
   "required_pipeline_file": "embodiments/manipulator/ur10e_gear_assembly/real_data/example_session/aligned/records.jsonl",
   "session_dir": "embodiments/manipulator/ur10e_gear_assembly/real_data/example_session",

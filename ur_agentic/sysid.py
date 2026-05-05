@@ -32,6 +32,16 @@ def estimate_gap(records: list[Record], config: PipelineConfig) -> dict:
         contact,
     )
 
+    domain_randomization = recommend_domain_randomization(
+        config,
+        delay_steps,
+        delay_s,
+        deadband,
+        pose_noise,
+        contact,
+        reset_scatter,
+    )
+
     return {
         "summary": summary,
         "delay": {
@@ -39,20 +49,13 @@ def estimate_gap(records: list[Record], config: PipelineConfig) -> dict:
             "delay_seconds": round(delay_s, 4),
         },
         "deadband_stiction_proxy": deadband,
+        "object_pose_noise": pose_noise,
         "shaft_pose_noise": pose_noise,
         "contact": contact,
         "reset_scatter": reset_scatter,
         "recommendations": {
             "action_scale": action_scale,
-            "domain_randomization": recommend_domain_randomization(
-                config,
-                delay_steps,
-                delay_s,
-                deadband,
-                pose_noise,
-                contact,
-                reset_scatter,
-            ),
+            "domain_randomization": domain_randomization,
             "sysid_targets": recommend_sysid_targets(delay_steps, deadband, pose_noise, contact),
             "human_inputs_needed": human_inputs_needed(config),
         },
@@ -85,7 +88,7 @@ def recommend_action_scale(
         "nominal_from_tutorial_or_config": round(nominal, 5),
         "lower_bound_from_stiction_proxy": round(lower_bound, 5),
         "upper_bound_from_contact_precision": round(upper_bound, 5),
-        "rationale": "stiction/deadband sets the lower bound; contact-rich insertion and force spikes set the upper bound",
+        "rationale": "stiction/deadband sets the lower bound; contact-rich motion and force spikes set the upper bound",
     }
 
 
@@ -104,28 +107,45 @@ def recommend_domain_randomization(
     if measured_pos_p95 is not None:
         pos_noise = max(train_pos_noise, min(0.01, float(measured_pos_p95) * 1.2))
 
+    quat_noise = float(config.perception.get("training_shaft_quat_noise_component", 0.01))
     swallowed = float(deadband.get("swallowed_command_ratio", 0.0))
     contact_over = float(contact.get("over_limit_ratio", 0.0))
     friction_spread = 0.1 + min(0.35, swallowed * 0.5 + contact_over * 0.3)
 
+    object_pose_noise = {
+        "object_position_uniform_m": [-round(pos_noise, 6), round(pos_noise, 6)],
+        "object_quat_uniform_component": [-quat_noise, quat_noise],
+        "agent_note": "fit to perception repeatability and calibration tests",
+    }
+    object_and_base_pose_randomization = {
+        "base_pose_x_m": [-0.1, 0.1],
+        "base_pose_y_m": [-0.25, 0.25],
+        "base_pose_z_m": [-0.1, 0.1],
+        "base_roll_pitch_deg": [-2.0, 2.0],
+        "base_yaw_deg": [-30.0, 30.0],
+        "object_relative_xy_m": [-0.02, 0.02],
+        "object_relative_z_m": [0.0575, 0.0775],
+        "object_relative_rpy_deg": [-5.0, 5.0],
+        "measured_reset_scatter": reset_scatter,
+    }
+
     return {
+        "object_pose_observation_noise": object_pose_noise,
         "shaft_pose_observation_noise": {
-            "gear_shaft_pos_uniform_m": [-round(pos_noise, 6), round(pos_noise, 6)],
-            "gear_shaft_quat_uniform_component": [
-                -float(config.perception.get("training_shaft_quat_noise_component", 0.01)),
-                float(config.perception.get("training_shaft_quat_noise_component", 0.01)),
-            ],
-            "agent_note": "fit to FoundationPose/RealSense repeatability and calibration tests",
+            "gear_shaft_pos_uniform_m": object_pose_noise["object_position_uniform_m"],
+            "gear_shaft_quat_uniform_component": object_pose_noise["object_quat_uniform_component"],
+            "agent_note": object_pose_noise["agent_note"],
         },
+        "object_and_base_pose_randomization": object_and_base_pose_randomization,
         "base_and_gear_pose_randomization": {
-            "base_pose_x_m": [-0.1, 0.1],
-            "base_pose_y_m": [-0.25, 0.25],
-            "base_pose_z_m": [-0.1, 0.1],
-            "base_roll_pitch_deg": [-2.0, 2.0],
-            "base_yaw_deg": [-30.0, 30.0],
-            "gear_relative_xy_m": [-0.02, 0.02],
-            "gear_relative_z_m": [0.0575, 0.0775],
-            "gear_relative_rpy_deg": [-5.0, 5.0],
+            "base_pose_x_m": object_and_base_pose_randomization["base_pose_x_m"],
+            "base_pose_y_m": object_and_base_pose_randomization["base_pose_y_m"],
+            "base_pose_z_m": object_and_base_pose_randomization["base_pose_z_m"],
+            "base_roll_pitch_deg": object_and_base_pose_randomization["base_roll_pitch_deg"],
+            "base_yaw_deg": object_and_base_pose_randomization["base_yaw_deg"],
+            "gear_relative_xy_m": object_and_base_pose_randomization["object_relative_xy_m"],
+            "gear_relative_z_m": object_and_base_pose_randomization["object_relative_z_m"],
+            "gear_relative_rpy_deg": object_and_base_pose_randomization["object_relative_rpy_deg"],
             "measured_reset_scatter": reset_scatter,
         },
         "actuator_and_contact_randomization": {
@@ -139,7 +159,7 @@ def recommend_domain_randomization(
         "latency_randomization": {
             "actuation_delay_steps": [max(0, delay_steps - 1), delay_steps + 1],
             "actuation_delay_seconds_center": round(delay_s, 4),
-            "camera_latency_seconds": "measure from ROS timestamps before widening this range",
+            "camera_latency_seconds": "measure from sensor/controller timestamps before widening this range",
         },
     }
 
@@ -149,9 +169,9 @@ def recommend_sysid_targets(delay_steps: int, deadband: dict, pose_noise: dict, 
         "robot impedance step response",
         "joint stiffness and damping scale",
         "joint friction and stiction",
-        "gear and gripper contact friction",
-        "FoundationPose plus RealSense shaft pose error",
-        "camera-to-robot calibration error",
+        "task-object and end-effector contact friction",
+        "perception object-pose error",
+        "sensor-to-robot calibration error",
     ]
     if delay_steps > 0:
         targets.append("policy-to-controller command delay")
@@ -160,18 +180,18 @@ def recommend_sysid_targets(delay_steps: int, deadband: dict, pose_noise: dict, 
     if pose_noise.get("position_error_p95_m") is None:
         targets.append("pose estimation repeatability packet")
     if float(contact.get("over_limit_ratio", 0.0)) > 0.0:
-        targets.append("contact force ceiling and insertion jam modes")
+        targets.append("contact force ceiling and jam or instability modes")
     return targets
 
 
 def human_inputs_needed(config: PipelineConfig) -> list[str]:
     return [
         "robot calibration file path for the physical robot",
-        "hand-eye/camera calibration validation result, target under 1 cm pose error",
-        "gripper type: robotiq_2f_140 or robotiq_2f_85",
-        "policy checkpoint path plus agent.yaml and env.yaml from Isaac Lab training",
-        "gear model and asset paths from the Isaac ROS manipulation package",
-        "10 pose-estimation repeatability samples for the gear base shaft",
+        "sensor-to-robot calibration validation result, target under 1 cm pose error",
+        "embodiment and end-effector configuration",
+        "policy checkpoint path plus agent.yaml and env.yaml from training",
+        "task object or asset paths used by the simulator/deployment stack",
+        "10 pose-estimation repeatability samples for the task object",
         "real run labels: success, slip, jam, pose miss, camera dropout, or calibration issue",
         "human approval before each real-robot run",
     ]

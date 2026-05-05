@@ -38,9 +38,9 @@ def _write_params_yaml(gap: dict[str, Any]) -> str:
         lines.append(f"  - {suggested}")
     lines.extend(
         [
-            "shaft_pose_observation_noise:",
-            f"  gear_shaft_pos_uniform_m: {dr['shaft_pose_observation_noise']['gear_shaft_pos_uniform_m']}",
-            f"  gear_shaft_quat_uniform_component: {dr['shaft_pose_observation_noise']['gear_shaft_quat_uniform_component']}",
+            "object_pose_observation_noise:",
+            f"  object_position_uniform_m: {dr['object_pose_observation_noise']['object_position_uniform_m']}",
+            f"  object_quat_uniform_component: {dr['object_pose_observation_noise']['object_quat_uniform_component']}",
             "latency_randomization:",
             f"  actuation_delay_steps: {dr['latency_randomization']['actuation_delay_steps']}",
             "actuator_randomization:",
@@ -71,7 +71,7 @@ def _write_report(gap: dict[str, Any], plan: dict[str, Any]) -> str:
         "",
         f"- Delay: {gap['delay']['delay_steps']} steps, {gap['delay']['delay_seconds']} s",
         f"- Stiction proxy: {gap['deadband_stiction_proxy']}",
-        f"- Shaft pose noise: {gap['shaft_pose_noise']}",
+        f"- Object pose noise: {gap['object_pose_noise']}",
         f"- Contact: {gap['contact']}",
         f"- Suggested action scale: {action['suggested']} (nominal {action['nominal_from_tutorial_or_config']})",
         "",
