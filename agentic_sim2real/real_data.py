@@ -173,6 +173,18 @@ def prepare_real_session(
                 "depth_image": camera_row.get("depth_image", ""),
             }
 
+        joint_command = _first_optional_vector_from_prefix(
+            joint_row,
+            "command",
+            "joint_command",
+            "commanded_joint",
+            "commanded_joint_position",
+            "target_joint",
+            "target_joint_position",
+            "control",
+            "control_position",
+            "motor_command",
+        )
         record = {
             "episode_index": episode,
             "timestamp": timestamp,
@@ -188,6 +200,8 @@ def prepare_real_session(
             "notes": label.get("notes"),
             "camera": camera_fields,
         }
+        if joint_command:
+            record["joint_command"] = joint_command
         records.append(record)
 
     with out.open("w") as stream:
@@ -283,6 +297,14 @@ def _vector_from_prefix(row: dict[str, str], prefix: str, optional: bool = False
             raise ValueError(f"Missing required column {prefix}_{idx}")
         values.append(float(value))
     return values
+
+
+def _first_optional_vector_from_prefix(row: dict[str, str], *prefixes: str) -> list[float]:
+    for prefix in prefixes:
+        values = _vector_from_prefix(row, prefix, optional=True)
+        if values:
+            return values
+    return []
 
 
 def _prefix_indices(row: dict[str, str], prefix: str) -> list[int]:

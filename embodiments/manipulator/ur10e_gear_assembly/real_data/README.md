@@ -72,7 +72,7 @@ embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>/
 
 | File | Required | Purpose |
 | --- | --- | --- |
-| `joint_data/joint_states.csv` | Yes | Timestamped policy actions, joint positions, joint velocities, optional end-effector pose |
+| `joint_data/joint_states.csv` | Yes | Timestamped policy actions, measured joint positions, optional commanded joint positions for Newton SysID, joint velocities, optional end-effector pose |
 | `pose_data/shaft_pose.csv` | Yes | FoundationPose/RealSense shaft pose estimate and optional reference pose |
 | `episode_labels/labels.csv` | Strongly recommended | Success/failure labels and failure modes |
 | `contact_data/contact.csv` | Recommended | Contact force or force proxy |
@@ -83,6 +83,7 @@ embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>/
 
 - Camera frames or ROS bag references
 - Joint state/action logs
+- Commanded joint-position logs when Newton SysID should fit actuator parameters
 - FoundationPose shaft pose estimates
 - Reference/validation shaft poses when available
 - Contact force or force-proxy logs
@@ -98,6 +99,7 @@ The converter creates JSONL rows like:
   "episode_index": 0,
   "timestamp": 0.033,
   "action": [0.01, 0.0, -0.006, 0.004, 0.001, 0.001],
+  "joint_command": [0.10, -1.20, 1.31, -1.65, -1.57, 0.02],
   "joint_state": [0.10, -1.20, 1.31, -1.65, -1.57, 0.02],
   "joint_velocity": [0.01, 0.0, -0.01, 0.0, 0.0, 0.0],
   "object_pose_estimate": [0.503, 0.104, 0.222, 0.0, 0.0, 0.010, 0.9999],

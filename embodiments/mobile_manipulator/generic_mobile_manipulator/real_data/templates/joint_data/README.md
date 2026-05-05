@@ -12,6 +12,7 @@ Required columns:
 Optional columns:
 
 - `joint_vel_0 ... joint_vel_N`
+- `command_0 ... command_N` or `joint_command_0 ... joint_command_N` when a SysID skill needs commanded joint positions
 - `ee_x`, `ee_y`, `ee_z`, `ee_qx`, `ee_qy`, `ee_qz`, `ee_qw`
 
 The converter detects the action and joint dimensions from the numbered

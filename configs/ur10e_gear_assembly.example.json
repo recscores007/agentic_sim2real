@@ -44,6 +44,31 @@
     "require_newton": false,
     "newton_root": "",
     "newton_command": [],
+    "newton_robot_name": "ur10e",
+    "newton_joint_names": [
+      "shoulder_pan_joint",
+      "shoulder_lift_joint",
+      "elbow_joint",
+      "wrist_1_joint",
+      "wrist_2_joint",
+      "wrist_3_joint"
+    ],
+    "newton_joint_types": [
+      "shoulder_pan",
+      "shoulder_lift",
+      "elbow",
+      "wrist_1",
+      "wrist_2",
+      "wrist_3"
+    ],
+    "newton_command_source": "auto",
+    "newton_allow_action_as_command": false,
+    "newton_run_mode": "run",
+    "min_newton_records": 5,
+    "newton_max_iter": 100,
+    "newton_num_envs": 64,
+    "newton_control_freq_hz": 500,
+    "newton_physics_freq_hz": 500,
     "newton_timeout_s": 900,
     "min_newton_confidence": 0.6
   },

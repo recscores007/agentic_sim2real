@@ -1,2 +1,2 @@
-episode_index,timestamp,action_0,action_1,action_2,action_3,action_4,action_5,joint_0,joint_1,joint_2,joint_3,joint_4,joint_5,joint_vel_0,joint_vel_1,joint_vel_2,joint_vel_3,joint_vel_4,joint_vel_5,ee_x,ee_y,ee_z,ee_qx,ee_qy,ee_qz,ee_qw
-0,0.000,0.012,0.000,-0.008,0.004,0.000,0.002,0.100,-1.200,1.310,-1.650,-1.570,0.020,0.000,0.000,0.000,0.000,0.000,0.000,0.420,0.120,0.300,0.000,0.707,0.707,0.000
+episode_index,timestamp,action_0,action_1,action_2,action_3,action_4,action_5,command_0,command_1,command_2,command_3,command_4,command_5,joint_0,joint_1,joint_2,joint_3,joint_4,joint_5,joint_vel_0,joint_vel_1,joint_vel_2,joint_vel_3,joint_vel_4,joint_vel_5,ee_x,ee_y,ee_z,ee_qx,ee_qy,ee_qz,ee_qw
+0,0.000,0.012,0.000,-0.008,0.004,0.000,0.002,0.100,-1.200,1.310,-1.650,-1.570,0.020,0.100,-1.200,1.310,-1.650,-1.570,0.020,0.000,0.000,0.000,0.000,0.000,0.000,0.420,0.120,0.300,0.000,0.707,0.707,0.000

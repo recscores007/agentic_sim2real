@@ -6,10 +6,11 @@
   "implementation": "newton_sysid",
   "depends_on": ["sysid_step_response"],
   "inputs": ["aligned_records", "config.sysid", "previous_sysid_result"],
-  "outputs": ["newton_sysid.json", "newton_command_log.json", "result.json"],
+  "outputs": ["newton_sysid.json", "newton_output.json", "newton_real_data/", "newton_fit/", "result.json"],
   "validators": [
-    "Newton command must consume canonical aligned records instead of embodiment-specific raw logs",
+    "Newton bridge must consume canonical aligned records instead of embodiment-specific raw logs",
     "fitted parameters and residual metrics must be written as JSON evidence when Newton is enabled",
+    "commanded joint positions must come from portable joint_command/command_* fields unless action-as-command is explicitly configured",
     "local log-based SysID remains the fallback when Newton is not configured",
     "if config.sysid.require_newton is true, missing or low-confidence Newton output must fail"
   ],

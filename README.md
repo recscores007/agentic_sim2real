@@ -89,9 +89,9 @@ Current SysID status:
 | --- | --- |
 | Can the offline pipeline autorun from an embodiment real-data session? | Yes. If `aligned/records.jsonl` is present it is used directly; if CSV subfolders are present the harness auto-prepares aligned records. |
 | Can it autorun a physical robot with no human? | No. Hardware is intentionally human-gated. |
-| Is SysID currently using IsaacLab-Newton from `es-rl/IsaacLab-Newton`? | Not by default. The local estimator in `agentic_sim2real/sysid.py` runs by default, and the portable `newton_sysid` skill runs only when `config.sysid.newton_command` is configured. |
+| Is SysID currently using IsaacLab-Newton from `es-rl/IsaacLab-Newton`? | Not by default. The local estimator in `agentic_sim2real/sysid.py` runs by default. When `config.sysid.newton_enabled=true`, the portable `newton_sysid` skill uses the built-in Newton bridge or a custom `newton_command`. |
 | What does current SysID estimate? | Delay, stiction/deadband proxy, contact summary, pose noise, reset scatter, action-scale bounds, and domain-randomization recommendations. |
-| Where does Newton SysID fit? | `skills/newton_sysid` consumes canonical aligned records, writes fitted parameters/residual evidence, and remains optional unless `config.sysid.require_newton=true`. |
+| Where does Newton SysID fit? | `skills/newton_sysid` converts canonical aligned records to IsaacLab-Newton SAGE CSVs, optionally runs `scripts/sysid/run_sysid.py`, parses `best_params.yaml`, and remains optional unless `config.sysid.require_newton=true`. |
 
 ## Skill Portability Direction
 
@@ -495,7 +495,7 @@ cp -R embodiments/manipulator/ur10e_gear_assembly/real_data/templates   embodime
 
 Fill in:
 
-- `joint_data/joint_states.csv`: policy actions, joint positions, joint velocities, optional end-effector pose
+- `joint_data/joint_states.csv`: policy actions, measured joint positions, optional commanded joint positions, joint velocities, optional end-effector pose
 - `pose_data/object_pose.csv`: perception object/target pose estimate and reference pose if available
 - `camera_data/index.csv`: color/depth image paths or frame provenance
 - `contact_data/contact.csv`: force or force-proxy samples
@@ -532,6 +532,12 @@ is passed as `--dataset`. If aligned records are missing but CSV subfolders are
 complete, `run-harness` and `run-evaluation-loop` auto-create them through the
 adapter-based ingestor.
 
+For IsaacLab-Newton SysID, include commanded joint-position columns in the same
+joint order as measured state: `command_0 ... command_N` or
+`joint_command_0 ... joint_command_N`. The bridge will not silently treat policy
+actions as joint-position commands unless `sysid.newton_command_source="action"`
+or `sysid.newton_allow_action_as_command=true` is set.
+
 Inspect a submitted session before running the full loop:
 
 ```bash
@@ -561,7 +567,9 @@ Edit `configs/ur10e_gear_assembly.local.json` for your Isaac Lab root, Isaac
 ROS workspace, gripper type, `ROS_DOMAIN_ID`, and manipulator config path.
 
 To enable IsaacLab-Newton later, keep the core pipeline unchanged and configure
-the portable Newton skill:
+the portable Newton skill. The built-in bridge converts aligned records to the
+SAGE-style `control.csv`, `state_motor.csv`, and `joint_list.txt` files expected
+by `es-rl/IsaacLab-Newton/scripts/sysid/run_sysid.py`:
 
 ```json
 {
@@ -569,21 +577,44 @@ the portable Newton skill:
     "newton_enabled": true,
     "require_newton": false,
     "newton_root": "/path/to/IsaacLab-Newton",
-    "newton_command": [
-      "python3",
-      "path/to/newton_fit_entrypoint.py",
-      "--input",
-      "{input}",
-      "--output",
-      "{output}"
-    ]
+    "newton_robot_name": "ur10e",
+    "newton_joint_names": [
+      "shoulder_pan_joint",
+      "shoulder_lift_joint",
+      "elbow_joint",
+      "wrist_1_joint",
+      "wrist_2_joint",
+      "wrist_3_joint"
+    ],
+    "newton_joint_types": ["shoulder_pan", "shoulder_lift", "elbow", "wrist_1", "wrist_2", "wrist_3"],
+    "newton_command_source": "auto",
+    "newton_run_mode": "run",
+    "min_newton_records": 5,
+    "newton_max_iter": 100,
+    "newton_num_envs": 64,
+    "newton_control_freq_hz": 500
   }
 }
 ```
 
-The command receives canonical aligned records and writes JSON evidence. If it
-is not configured, `newton_sysid` skips and the local SysID skill remains the
+If `newton_command` is also configured, it overrides the built-in bridge. That
+custom command receives canonical aligned records and writes JSON evidence. If
+Newton is not enabled, `newton_sysid` skips and the local SysID skill remains the
 active fallback.
+
+The bridge avoids UR-only assumptions: commanded/measured joint vectors are
+portable fields, joint names and Newton joint types come from config, and
+non-UR embodiments can replace only the config or the `newton_sysid` skill
+without changing the evaluator architecture.
+
+To double-check conversion without launching Isaac Lab or Newton, run:
+
+```bash
+PYTHONPATH=. python3 scripts/newton/run_newton_sysid_bridge.py \
+  --input outputs/<run>/skills/newton_sysid/newton_input.json \
+  --output outputs/<run>/skills/newton_sysid/newton_output.json \
+  --prepare-only
+```
 
 ### 2. List the skills
 

@@ -12,6 +12,7 @@ from .autoresearch import build_plan
 from .config import PipelineConfig, choose_task, load_config, nominal_action_scale
 from .data_quality import evaluate_real_data_quality
 from .dataset import load_records
+from .newton_bridge import run_newton_bridge
 from .real_data import ensure_aligned_dataset
 from .safety import require_real_robot_gate
 from .sysid import estimate_gap
@@ -738,26 +739,25 @@ def _impl_newton_sysid(
             status="skip",
             quality_score=1.0,
             confidence=1.0,
-            warnings=["Newton SysID skipped; set sysid.newton_enabled plus sysid.newton_command to enable it"],
+            warnings=["Newton SysID skipped; set sysid.newton_enabled plus sysid.newton_root or sysid.newton_command to enable it"],
             evidence_files=[evidence],
             metrics={"newton_enabled": False, "fallback_skill": "sysid_step_response"},
         )
 
     if not command:
-        message = "Newton SysID is enabled but sysid.newton_command is not configured"
-        evidence = _write_json(
-            skill_out / "newton_sysid.json",
-            {"status": "fail" if required else "skip", "reason": message, "input_file": str(input_path)},
-        )
-        return SkillResult(
-            skill_id=manifest.skill_id,
-            status="fail" if required else "skip",
-            quality_score=0.0 if required else 1.0,
-            confidence=1.0,
-            blocking_failures=[message] if required else [],
-            warnings=[] if required else [message],
-            evidence_files=[evidence],
-            metrics={"newton_enabled": True, "newton_command_configured": False},
+        try:
+            payload = run_newton_bridge(input_payload, work_dir=skill_out, output_path=output_path)
+        except Exception as exc:
+            message = f"Built-in Newton bridge could not complete: {exc}"
+            evidence = _write_json(log_path, {"error": str(exc), "input_file": str(input_path)})
+            return _newton_unavailable_result(manifest.skill_id, required, message, evidence)
+        return _newton_result_from_payload(
+            manifest.skill_id,
+            payload,
+            sysid_cfg,
+            required,
+            skill_out,
+            extra_evidence=[str(output_path)] if output_path.exists() else [],
         )
 
     formatted_command = [
@@ -808,21 +808,13 @@ def _impl_newton_sysid(
         message = f"Newton SysID result could not be parsed: {exc}"
         return _newton_unavailable_result(manifest.skill_id, required, message, log_evidence)
 
-    confidence = float(payload.get("confidence", payload.get("metrics", {}).get("confidence", 0.0)))
-    min_confidence = float(sysid_cfg.get("min_newton_confidence", 0.6))
-    failures = []
-    if confidence < min_confidence:
-        failures.append(f"Newton SysID confidence {confidence:.3f} below required {min_confidence:.3f}")
-    evidence = _write_json(skill_out / "newton_sysid.json", payload)
-    return SkillResult(
-        skill_id=manifest.skill_id,
-        status="fail" if failures else "pass",
-        quality_score=float(payload.get("quality_score", confidence)),
-        confidence=confidence,
-        blocking_failures=failures,
-        warnings=[str(item) for item in payload.get("warnings", [])],
-        evidence_files=[evidence, log_evidence],
-        metrics=dict(payload.get("metrics", {})),
+    return _newton_result_from_payload(
+        manifest.skill_id,
+        payload,
+        sysid_cfg,
+        required,
+        skill_out,
+        extra_evidence=[log_evidence],
     )
 
 
@@ -836,6 +828,54 @@ def _newton_unavailable_result(skill_id: str, required: bool, message: str, evid
         warnings=[] if required else [message],
         evidence_files=[evidence],
         metrics={"newton_available": False, "fallback_skill": "sysid_step_response"},
+    )
+
+
+def _newton_result_from_payload(
+    skill_id: str,
+    payload: dict[str, Any],
+    sysid_cfg: dict[str, Any],
+    required: bool,
+    skill_out: Path,
+    extra_evidence: list[str] | None = None,
+) -> SkillResult:
+    confidence = float(payload.get("confidence", payload.get("metrics", {}).get("confidence", 0.0)))
+    payload_status = str(payload.get("status", "pass")).lower()
+    if payload_status not in {"pass", "fail", "skip"}:
+        payload_status = "pass"
+
+    failures = [str(item) for item in payload.get("blocking_failures", [])]
+    if payload_status == "fail" and not failures and payload.get("reason"):
+        failures.append(str(payload["reason"]))
+    if required and payload_status == "skip":
+        failures.append("Newton SysID is required but the Newton payload skipped")
+    if payload_status != "skip":
+        min_confidence = float(sysid_cfg.get("min_newton_confidence", 0.6))
+        if confidence < min_confidence:
+            failures.append(f"Newton SysID confidence {confidence:.3f} below required {min_confidence:.3f}")
+
+    if failures or payload_status == "fail":
+        status = "fail"
+    elif payload_status == "skip":
+        status = "skip"
+    else:
+        status = "pass"
+
+    evidence = _write_json(skill_out / "newton_sysid.json", payload)
+    evidence_files = [evidence]
+    evidence_files.extend(extra_evidence or [])
+    evidence_files.extend(str(item) for item in payload.get("evidence_files", []))
+    deduped_evidence = list(dict.fromkeys(evidence_files))
+
+    return SkillResult(
+        skill_id=skill_id,
+        status=status,
+        quality_score=float(payload.get("quality_score", confidence)),
+        confidence=confidence,
+        blocking_failures=failures,
+        warnings=[str(item) for item in payload.get("warnings", [])],
+        evidence_files=deduped_evidence,
+        metrics=dict(payload.get("metrics", {})),
     )
 
 

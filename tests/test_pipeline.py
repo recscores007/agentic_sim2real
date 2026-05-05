@@ -180,6 +180,7 @@ class PipelineTests(unittest.TestCase):
             records = load_records(out)
             self.assertEqual(len(records), 12)
             self.assertEqual(len(records[0].action), 6)
+            self.assertEqual(len(records[0].raw.get("joint_command", [])), 6)
             self.assertGreater(len(records[0].shaft_pose_estimate), 0)
 
     def test_inspect_real_data_uses_ur_adapter(self) -> None:

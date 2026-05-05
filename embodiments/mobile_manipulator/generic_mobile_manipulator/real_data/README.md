@@ -29,3 +29,7 @@ aligned/
 ```
 
 Use `object_pose.csv` for portable embodiments. If an embodiment has a task-specific pose source name, declare that in its `embodiment.json` manifest.
+
+For physics SysID, add `command_0 ... command_N` or
+`joint_command_0 ... joint_command_N` to `joint_data/joint_states.csv` so the
+agent can distinguish commanded joint positions from measured joint positions.

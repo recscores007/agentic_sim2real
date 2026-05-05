@@ -51,6 +51,11 @@ may keep an object-specific source file such as `shaft_pose.csv`; the generated
 pipeline records still use canonical `object_pose_estimate` and
 `object_pose_reference` fields.
 
+Use `command_0 ... command_N` or `joint_command_0 ... joint_command_N` in
+`joint_data/joint_states.csv` when a SysID skill needs commanded joint
+positions. This stays portable across manipulators, humanoids, and mobile
+manipulators; robot-specific joint names belong in config.
+
 `embodiment.json` is also the adapter contract. Keep raw parsing choices here,
 not in core skills:
 

@@ -1,9 +1,69 @@
 {
+  "adapter": {
+    "accepted_pose_files": [
+      "object_pose.csv"
+    ],
+    "accepted_raw_sources": [
+      "aligned_records",
+      "csv_session",
+      "rosbag2",
+      "image_sequence"
+    ],
+    "canonical_pose_file": "object_pose.csv",
+    "embodiment_type": "manipulator",
+    "has_external_ingestor": false,
+    "id": "manipulator/generic_manipulator",
+    "path": "embodiments/manipulator/generic_manipulator"
+  },
   "episodes": [
     0,
     1,
     2
   ],
+  "inspection": {
+    "accepted_pose_files": [
+      "object_pose.csv"
+    ],
+    "adapter": {
+      "accepted_pose_files": [
+        "object_pose.csv"
+      ],
+      "accepted_raw_sources": [
+        "aligned_records",
+        "csv_session",
+        "rosbag2",
+        "image_sequence"
+      ],
+      "canonical_pose_file": "object_pose.csv",
+      "embodiment_type": "manipulator",
+      "has_external_ingestor": false,
+      "id": "manipulator/generic_manipulator",
+      "path": "embodiments/manipulator/generic_manipulator"
+    },
+    "blockers": [],
+    "files": {
+      "aligned_records": true,
+      "calibration": true,
+      "camera_index": true,
+      "contact": true,
+      "joint_states": true,
+      "pose": true
+    },
+    "quality_inputs": {
+      "calibration_present": true,
+      "camera_index_present": true,
+      "contact_present": true
+    },
+    "raw_sources": {
+      "aligned_records": true,
+      "csv_session": true,
+      "image_sequence": false,
+      "rosbag2": false
+    },
+    "selected_pose_file": "embodiments/manipulator/generic_manipulator/real_data/example_session/pose_data/object_pose.csv",
+    "session_dir": "embodiments/manipulator/generic_manipulator/real_data/example_session",
+    "status": "aligned_records_ready"
+  },
   "missing_camera_matches": 0,
   "missing_contact_matches": 0,
   "missing_pose_matches": 0,

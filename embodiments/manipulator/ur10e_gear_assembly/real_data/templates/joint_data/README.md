@@ -12,6 +12,7 @@ Required columns:
 Recommended columns:
 
 - `joint_vel_0` ... `joint_vel_5`
+- `command_0` ... `command_5` or `joint_command_0` ... `joint_command_5` when IsaacLab-Newton SysID should fit actuator parameters
 - `ee_x`, `ee_y`, `ee_z`, `ee_qx`, `ee_qy`, `ee_qz`, `ee_qw`
 
 Joint order:
