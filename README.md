@@ -590,6 +590,8 @@ The UI also converts `quality_score` and `confidence` into action guidance:
 | --- | --- | --- | --- |
 | `quality_score` | Did the validator produce useful evidence? | Low quality blocks or weakens promotion. | Improve the artifact, data, or config that the skill validated. |
 | `confidence` | How much evidence supports the result? | Low confidence stays smoke/review-only or becomes a critic observation. | Collect more episodes, pose samples, labels, rollout metrics, or backend SysID evidence. |
+| `quality_rationale` | Why that quality value was assigned. | Shows the formula/input behind the score. | Use it to fix the specific missing or weak evidence. |
+| `confidence_rationale` | Why that confidence value was assigned. | Distinguishes successful evidence confidence from confidence about a skip/block. | Use it to decide whether more data is needed. |
 | `pipeline_action` | What the harness should do next. | Proceed, validate candidate, use fallback, block, or stop before hardware. | None directly; this is the automated lane. |
 | `user_action` | What the human/operator should supply or approve. | The pipeline waits when the action is required. | Configure Newton/PACE, provide rollout metrics, improve real data, review policy artifacts, or approve hardware. |
 

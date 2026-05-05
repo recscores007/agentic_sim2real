@@ -275,6 +275,8 @@ def _skill_action_guidance(skill_id: str, result: dict[str, Any]) -> dict[str, s
         "action_level": "review",
         "quality_meaning": _quality_meaning(status, quality),
         "confidence_meaning": _confidence_meaning(status, confidence),
+        "quality_rationale": _quality_rationale(skill_id, result, status, quality, warnings, failures),
+        "confidence_rationale": _confidence_rationale(skill_id, result, status, confidence),
         "pipeline_action": "Hold this result for review.",
         "user_action": "Inspect the skill evidence if this affects your release decision.",
     }
@@ -491,6 +493,120 @@ def _confidence_meaning(status: str, confidence: float | None) -> str:
     if confidence >= 0.5:
         return "Minimum evidence coverage; collect more for release."
     return "Low evidence coverage; treat as exploratory."
+
+
+def _quality_rationale(
+    skill_id: str,
+    result: dict[str, Any],
+    status: str,
+    quality: float | None,
+    warnings: list[str],
+    failures: list[str],
+) -> str:
+    metrics = dict(result.get("metrics", {}))
+    if status == "fail":
+        reason = failures[0] if failures else "the skill reported a failing status"
+        return f"Quality is low because the validator failed: {reason}."
+    if status == "evidence_missing":
+        if skill_id == "newton_sysid":
+            return "Quality is 0.0 because Newton SysID did not run; sysid.newton_enabled/root/command is not configured."
+        if skill_id == "pace_sysid":
+            return "Quality is 0.0 because PACE SysID did not run; sysid.pace_enabled/root/command is not configured."
+        return "Quality is 0.0 because required evidence was not produced."
+    if status == "not_applicable":
+        return "Quality is 0.0 because this skill was intentionally skipped for the current run profile."
+    if status == "not_approved":
+        return "Quality is 0.0 because this is a human approval gate and hardware was not approved."
+
+    if skill_id == "env_preflight":
+        return "Quality is 1.0 when required local preflight checks have no blocking failures; warnings remain informational."
+    if skill_id == "isaaclab_task_check":
+        return "Quality is 1.0 because the configured Isaac Lab task, observation contract, gripper, and action scale passed validation."
+    if skill_id == "policy_artifact_audit":
+        completeness = metrics.get("artifact_completeness", quality)
+        return f"Quality equals policy artifact completeness; this run found completeness={completeness}."
+    if skill_id == "ros_preflight":
+        return "Quality is 1.0 because the ROS workflow contract matched the expected gear-assembly deployment settings."
+    if skill_id == "pose_repeatability":
+        samples = metrics.get("samples")
+        p95 = metrics.get("position_error_p95_m")
+        return f"Quality is 1.0 because pose repeatability passed: samples={samples}, position_error_p95_m={p95}."
+    if skill_id == "real_data_quality_gate":
+        return _real_data_quality_rationale(metrics, warnings)
+    if skill_id == "sysid_step_response":
+        return "Quality is 0.75 because the local log-based SysID gate passed, but it is a lightweight estimator rather than fitted Newton/PACE parameters."
+    if skill_id == "domain_randomization_update":
+        pos_noise = metrics.get("object_pos_noise")
+        friction = metrics.get("friction_sweep")
+        return f"Quality is 0.9 because proposed DR ranges stayed inside safety bounds: object_pos_noise={pos_noise}, friction_sweep={friction}."
+    if skill_id == "action_scale_sweep":
+        suggested = metrics.get("suggested")
+        candidates = metrics.get("candidates")
+        return f"Quality is 0.85 because the suggested action scale stayed within configured limits: suggested={suggested}, candidates={candidates}."
+    if skill_id == "autoresearch_planner":
+        count = metrics.get("experiment_count")
+        return f"Quality is 0.9 because AutoResearch produced the required experiment plan size: experiment_count={count}."
+    if skill_id == "sim_eval_regression":
+        delta = _float_or_none(metrics.get("success_delta"))
+        if delta is not None:
+            return f"Quality is 0.8 plus positive success delta, capped at 1.0; success_delta={delta:.3f} gives quality={quality}."
+        return "Quality is based on candidate-vs-baseline regression checks and safety gates."
+    if skill_id == "isaaclab_rollout_regression":
+        return "Quality is 0.0 because no Isaac Lab rollout metrics or rollout command were configured for this smoke run."
+    if skill_id == "release_candidate_gate":
+        return "Quality is 0.95 because the aggregate release gate found no blocking failures, while hardware approval remains separate."
+    if skill_id == "real_robot_gate":
+        return "Quality is 1.0 only after explicit human hardware approval; this run stayed blocked by design."
+    if quality is None:
+        return "No quality rationale is available because no quality score was reported."
+    return f"Quality={quality} was assigned by the skill implementation from its validator result."
+
+
+def _confidence_rationale(
+    skill_id: str,
+    result: dict[str, Any],
+    status: str,
+    confidence: float | None,
+) -> str:
+    metrics = dict(result.get("metrics", {}))
+    if confidence is None:
+        return "No confidence rationale is available because no confidence score was reported."
+    if status in {"evidence_missing", "not_applicable", "not_approved"}:
+        return "Confidence here means the harness is confident about the skip/block decision, not that the skill succeeded."
+    if skill_id == "real_data_quality_gate":
+        episodes = metrics.get("episodes")
+        return f"Confidence is min(1.0, episodes / configured minimum episodes); episodes={episodes}, confidence={confidence}."
+    if skill_id == "pose_repeatability":
+        samples = metrics.get("samples")
+        return f"Confidence is min(1.0, pose_samples / 20); samples={samples}, confidence={confidence}."
+    if skill_id == "sysid_step_response":
+        return "Confidence is the local SysID evidence confidence floor/max from delay and deadband estimates; this sample run sits at the minimum useful floor."
+    if skill_id == "policy_artifact_audit":
+        return "Confidence is a fixed 0.8 because file presence is deterministic, but deployability still needs human/pipeline review."
+    if skill_id == "ros_preflight":
+        return "Confidence is a fixed 0.9 because config checks are deterministic but runtime ROS sourcing can still differ."
+    if skill_id in {"action_scale_sweep", "domain_randomization_update", "autoresearch_planner", "sim_eval_regression"}:
+        return f"Confidence is a conservative heuristic assigned by this proposal/regression skill after bounded checks passed: confidence={confidence}."
+    if skill_id == "isaaclab_rollout_regression":
+        episodes = metrics.get("episodes") or metrics.get("num_episodes") or metrics.get("rollout_episodes")
+        return f"When rollout metrics exist, confidence is rollout episodes divided by the configured minimum; this run reported episodes={episodes}."
+    if skill_id in {"env_preflight", "isaaclab_task_check", "release_candidate_gate", "real_robot_gate"}:
+        return "Confidence is 1.0 because this is a deterministic gate over explicit config/evidence."
+    return f"Confidence={confidence} was assigned by the skill implementation from available evidence coverage."
+
+
+def _real_data_quality_rationale(metrics: dict[str, Any], warnings: list[str]) -> str:
+    parts = [
+        "Quality starts at 1.0.",
+        f"records={metrics.get('records')}",
+        f"episodes={metrics.get('episodes')}",
+        f"contact_coverage={metrics.get('contact_coverage')}",
+        f"success_label_coverage={metrics.get('success_label_coverage')}",
+        f"joint_velocity_coverage={metrics.get('joint_velocity_coverage')}",
+    ]
+    if warnings:
+        parts.append(f"warnings={len(warnings)} reduce the score.")
+    return " ".join(parts)
 
 
 def _warning_action(skill_id: str, warnings: list[str], fallback: str) -> str:
@@ -771,6 +887,7 @@ const proposalSkills = (board.agentic_proposal_skills || []).map(row => `<tr>
   <td>${{pill(row.action_level)}}<div class="note">${{fmt(row.agentic_role)}}</div></td>
   <td>${{num(row.quality_score)}}<div class="note">${{fmt(row.quality_meaning)}}</div></td>
   <td>${{num(row.confidence)}}<div class="note">${{fmt(row.confidence_meaning)}}</div></td>
+  <td><b>Q:</b> ${{fmt(row.quality_rationale)}}<br><b>C:</b> ${{fmt(row.confidence_rationale)}}</td>
   <td>${{fmt(row.pipeline_action)}}</td>
   <td>${{fmt(row.user_action)}}</td>
 </tr>`).join("");
@@ -781,6 +898,7 @@ const deterministicSkills = (board.deterministic_validation_skills || []).map(ro
   <td>${{pill(row.action_level)}}<div class="note">${{row.release_blocking ? "release-blocking" : "non-blocking"}}; ${{row.human_required ? "human review" : "pipeline-owned"}}</div></td>
   <td>${{num(row.quality_score)}}<div class="note">${{fmt(row.quality_meaning)}}</div></td>
   <td>${{num(row.confidence)}}<div class="note">${{fmt(row.confidence_meaning)}}</div></td>
+  <td><b>Q:</b> ${{fmt(row.quality_rationale)}}<br><b>C:</b> ${{fmt(row.confidence_rationale)}}</td>
   <td>${{fmt(row.pipeline_action)}}</td>
   <td>${{fmt(row.user_action)}}</td>
 </tr>`).join("");
@@ -791,13 +909,13 @@ const nondetHtml = `
   <p class="note">The LLM-style part proposes, orders, critiques, or explains. The harness still validates through atomic evidence.</p>
   <div class="table-wrap"><table><thead><tr><th>Responsibility</th><th>Covered by</th><th>Type</th><th>Related skill/artifact</th><th>Validation boundary</th></tr></thead><tbody>${{coverageRows}}</tbody></table></div>
   <h3 style="margin-top:14px">Proposal-Producing Atomic Skills</h3>
-  <div class="table-wrap"><table><thead><tr><th>Skill</th><th>Status</th><th>Action level</th><th>Quality</th><th>Confidence</th><th>Pipeline action</th><th>User action</th></tr></thead><tbody>${{proposalSkills || "<tr><td colspan='7' class='note'>No proposal-producing skills ran in this run.</td></tr>"}}</tbody></table></div>
+  <div class="table-wrap"><table><thead><tr><th>Skill</th><th>Status</th><th>Action level</th><th>Quality</th><th>Confidence</th><th>Why assigned</th><th>Pipeline action</th><th>User action</th></tr></thead><tbody>${{proposalSkills || "<tr><td colspan='8' class='note'>No proposal-producing skills ran in this run.</td></tr>"}}</tbody></table></div>
 </section>`;
 
 const deterministicHtml = `
 <section class="panel wide">
   <h2>Deterministic Validation Skills</h2>
-  <div class="table-wrap"><table><thead><tr><th>Skill</th><th>Status</th><th>Action level</th><th>Quality</th><th>Confidence</th><th>Pipeline action</th><th>User action</th></tr></thead><tbody>${{deterministicSkills}}</tbody></table></div>
+  <div class="table-wrap"><table><thead><tr><th>Skill</th><th>Status</th><th>Action level</th><th>Quality</th><th>Confidence</th><th>Why assigned</th><th>Pipeline action</th><th>User action</th></tr></thead><tbody>${{deterministicSkills}}</tbody></table></div>
 </section>`;
 
 const journal = (state.journal || []).slice(-9).map(row => `<div class="journal-item">

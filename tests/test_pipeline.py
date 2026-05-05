@@ -296,6 +296,8 @@ class PipelineTests(unittest.TestCase):
                 self.assertIn("user_action", row)
                 self.assertIn("quality_meaning", row)
                 self.assertIn("confidence_meaning", row)
+                self.assertIn("quality_rationale", row)
+                self.assertIn("confidence_rationale", row)
             real_robot_row = next(
                 row
                 for row in state["scoreboard"]["deterministic_validation_skills"]
@@ -303,6 +305,13 @@ class PipelineTests(unittest.TestCase):
             )
             self.assertEqual(real_robot_row["action_level"], "human_approval_required")
             self.assertIn("Human", real_robot_row["user_action"])
+            newton_row = next(
+                row
+                for row in state["scoreboard"]["deterministic_validation_skills"]
+                if row["skill_id"] == "newton_sysid"
+            )
+            self.assertIn("Newton SysID did not run", newton_row["quality_rationale"])
+            self.assertIn("skip/block", newton_row["confidence_rationale"])
             artifacts = summary["scoreboard"]["artifacts"]
             for key in ["rollout_data", "pipeline_input", "scorecard", "pipeline_output", "run_record", "real_data_manifest", "ui", "state"]:
                 self.assertTrue(Path(artifacts[key]).exists())
