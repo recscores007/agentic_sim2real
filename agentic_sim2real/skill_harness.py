@@ -10,7 +10,9 @@ from typing import Any, Callable
 
 from .autoresearch import build_plan
 from .config import PipelineConfig, choose_task, load_config, nominal_action_scale
+from .data_quality import evaluate_real_data_quality
 from .dataset import load_records
+from .real_data import ensure_aligned_dataset
 from .safety import require_real_robot_gate
 from .sysid import estimate_gap
 
@@ -190,13 +192,14 @@ def run_harness(
 ) -> dict[str, Any]:
     root_path = Path(root).resolve()
     resolved_config_path = Path(config_path).expanduser().resolve()
+    resolved_dataset_path = ensure_aligned_dataset(dataset_path, root=root_path).resolve()
     out = Path(out_dir).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
     ctx = HarnessContext(
         root=root_path,
         config_path=resolved_config_path,
         config=load_config(resolved_config_path),
-        dataset=Path(dataset_path).expanduser().resolve(),
+        dataset=resolved_dataset_path,
         out_dir=out,
         include_real=include_real,
     )
@@ -642,6 +645,26 @@ def _impl_pose_repeatability(
     )
 
 
+def _impl_real_data_quality_gate(
+    manifest: SkillManifest,
+    ctx: HarnessContext,
+    skill_out: Path,
+    previous: dict[str, SkillResult],
+) -> SkillResult:
+    report = evaluate_real_data_quality(ctx.dataset, ctx.config, root=ctx.root)
+    evidence = _write_json(skill_out / "real_data_quality.json", report)
+    return SkillResult(
+        skill_id=manifest.skill_id,
+        status=report["status"],
+        quality_score=float(report["quality_score"]),
+        confidence=float(report["confidence"]),
+        blocking_failures=[str(item) for item in report["blocking_failures"]],
+        warnings=[str(item) for item in report["warnings"]],
+        evidence_files=[evidence],
+        metrics=report["metrics"],
+    )
+
+
 def _impl_sysid_step_response(
     manifest: SkillManifest,
     ctx: HarnessContext,
@@ -675,6 +698,147 @@ def _impl_sysid_step_response(
     )
 
 
+def _impl_newton_sysid(
+    manifest: SkillManifest,
+    ctx: HarnessContext,
+    skill_out: Path,
+    previous: dict[str, SkillResult],
+) -> SkillResult:
+    sysid_cfg = ctx.config.sysid
+    required = bool(sysid_cfg.get("require_newton", False))
+    command = [str(item) for item in sysid_cfg.get("newton_command", [])]
+    newton_root = str(sysid_cfg.get("newton_root") or os.environ.get("ISAACLAB_NEWTON_ROOT", ""))
+    enabled = bool(sysid_cfg.get("newton_enabled", False) or command or newton_root)
+    input_path = skill_out / "newton_input.json"
+    output_path = skill_out / "newton_output.json"
+    log_path = skill_out / "newton_command_log.json"
+
+    input_payload = {
+        "dataset": str(ctx.dataset),
+        "config": ctx.config.merged(),
+        "root": str(ctx.root),
+        "newton_root": newton_root,
+        "previous_results": {skill_id: result.to_dict() for skill_id, result in previous.items()},
+        "expected_output_json": str(output_path),
+    }
+    input_path.write_text(json.dumps(input_payload, indent=2, sort_keys=True) + "\n")
+
+    if not enabled:
+        evidence = _write_json(
+            skill_out / "newton_sysid.json",
+            {
+                "status": "skip",
+                "reason": "IsaacLab-Newton is not enabled; local log-based SysID remains the active fallback.",
+                "fallback_skill": "sysid_step_response",
+                "input_file": str(input_path),
+            },
+        )
+        return SkillResult(
+            skill_id=manifest.skill_id,
+            status="skip",
+            quality_score=1.0,
+            confidence=1.0,
+            warnings=["Newton SysID skipped; set sysid.newton_enabled plus sysid.newton_command to enable it"],
+            evidence_files=[evidence],
+            metrics={"newton_enabled": False, "fallback_skill": "sysid_step_response"},
+        )
+
+    if not command:
+        message = "Newton SysID is enabled but sysid.newton_command is not configured"
+        evidence = _write_json(
+            skill_out / "newton_sysid.json",
+            {"status": "fail" if required else "skip", "reason": message, "input_file": str(input_path)},
+        )
+        return SkillResult(
+            skill_id=manifest.skill_id,
+            status="fail" if required else "skip",
+            quality_score=0.0 if required else 1.0,
+            confidence=1.0,
+            blocking_failures=[message] if required else [],
+            warnings=[] if required else [message],
+            evidence_files=[evidence],
+            metrics={"newton_enabled": True, "newton_command_configured": False},
+        )
+
+    formatted_command = [
+        item.format(input=input_path, output=output_path, dataset=ctx.dataset, root=ctx.root, newton_root=newton_root)
+        for item in command
+    ]
+    env = os.environ.copy()
+    env.update(
+        {
+            "AGENTIC_SIM2REAL_NEWTON_INPUT_JSON": str(input_path),
+            "AGENTIC_SIM2REAL_NEWTON_OUTPUT_JSON": str(output_path),
+            "AGENTIC_SIM2REAL_DATASET": str(ctx.dataset),
+            "ISAACLAB_NEWTON_ROOT": newton_root,
+        }
+    )
+    try:
+        completed = subprocess.run(
+            formatted_command,
+            cwd=ctx.root,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=float(sysid_cfg.get("newton_timeout_s", 900)),
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        message = f"Newton SysID command could not complete: {exc}"
+        evidence = _write_json(log_path, {"command": formatted_command, "error": str(exc)})
+        return _newton_unavailable_result(manifest.skill_id, required, message, evidence)
+
+    log_evidence = _write_json(
+        log_path,
+        {
+            "command": formatted_command,
+            "returncode": completed.returncode,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+            "result_file": str(output_path),
+        },
+    )
+    if completed.returncode != 0:
+        message = f"Newton SysID command exited {completed.returncode}"
+        return _newton_unavailable_result(manifest.skill_id, required, message, log_evidence)
+
+    try:
+        payload = json.loads(output_path.read_text()) if output_path.exists() else json.loads(completed.stdout)
+    except Exception as exc:
+        message = f"Newton SysID result could not be parsed: {exc}"
+        return _newton_unavailable_result(manifest.skill_id, required, message, log_evidence)
+
+    confidence = float(payload.get("confidence", payload.get("metrics", {}).get("confidence", 0.0)))
+    min_confidence = float(sysid_cfg.get("min_newton_confidence", 0.6))
+    failures = []
+    if confidence < min_confidence:
+        failures.append(f"Newton SysID confidence {confidence:.3f} below required {min_confidence:.3f}")
+    evidence = _write_json(skill_out / "newton_sysid.json", payload)
+    return SkillResult(
+        skill_id=manifest.skill_id,
+        status="fail" if failures else "pass",
+        quality_score=float(payload.get("quality_score", confidence)),
+        confidence=confidence,
+        blocking_failures=failures,
+        warnings=[str(item) for item in payload.get("warnings", [])],
+        evidence_files=[evidence, log_evidence],
+        metrics=dict(payload.get("metrics", {})),
+    )
+
+
+def _newton_unavailable_result(skill_id: str, required: bool, message: str, evidence: str) -> SkillResult:
+    return SkillResult(
+        skill_id=skill_id,
+        status="fail" if required else "skip",
+        quality_score=0.0 if required else 1.0,
+        confidence=1.0,
+        blocking_failures=[message] if required else [],
+        warnings=[] if required else [message],
+        evidence_files=[evidence],
+        metrics={"newton_available": False, "fallback_skill": "sysid_step_response"},
+    )
+
+
 def _impl_domain_randomization_update(
     manifest: SkillManifest,
     ctx: HarnessContext,
@@ -686,7 +850,7 @@ def _impl_domain_randomization_update(
     failures = []
     pos_range = dr.get("object_pose_observation_noise", dr["shaft_pose_observation_noise"]).get("object_position_uniform_m", dr["shaft_pose_observation_noise"]["gear_shaft_pos_uniform_m"])
     if max(abs(float(v)) for v in pos_range) > 0.01:
-        failures.append("shaft pose noise recommendation exceeds 1 cm safety cap")
+        failures.append("object pose noise recommendation exceeds 1 cm safety cap")
     friction = dr["actuator_and_contact_randomization"]["friction_sweep_for_agent_experiments"]
     if friction[0] <= 0 or friction[1] > 1.5:
         failures.append("friction sweep moved outside conservative bounds")
@@ -857,8 +1021,10 @@ IMPLEMENTATIONS: dict[str, Callable[[SkillManifest, HarnessContext, Path, dict[s
     "isaaclab_task_check": _impl_isaaclab_task_check,
     "policy_artifact_audit": _impl_policy_artifact_audit,
     "ros_preflight": _impl_ros_preflight,
+    "real_data_quality_gate": _impl_real_data_quality_gate,
     "pose_repeatability": _impl_pose_repeatability,
     "sysid_step_response": _impl_sysid_step_response,
+    "newton_sysid": _impl_newton_sysid,
     "domain_randomization_update": _impl_domain_randomization_update,
     "action_scale_sweep": _impl_action_scale_sweep,
     "autoresearch_planner": _impl_autoresearch_planner,

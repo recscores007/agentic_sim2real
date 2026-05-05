@@ -76,9 +76,9 @@ DATASET=embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name> ./s
 DATASET=embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name> ./scripts/run_evaluation_loop.sh
 ```
 
-That offline chain includes data alignment, atomic skills, the current SysID
-estimator, AutoResearch proposals, evaluator scoring, critic review, and release
-gate decision.
+That offline chain includes adapter-based data inspection, data alignment, a
+real-data quality gate, local SysID, optional Newton SysID, AutoResearch
+proposals, evaluator scoring, critic review, and release gate decision.
 
 It does not authorize unattended hardware. The real robot remains behind the
 human hardware gate, and `safe_to_autorun_robot` is always false.
@@ -87,11 +87,11 @@ Current SysID status:
 
 | Question | Current Answer |
 | --- | --- |
-| Can the offline pipeline autorun from an embodiment real-data session? | Yes, after `prepare_real_data.sh` creates or refreshes `aligned/records.jsonl`. |
+| Can the offline pipeline autorun from an embodiment real-data session? | Yes. If `aligned/records.jsonl` is present it is used directly; if CSV subfolders are present the harness auto-prepares aligned records. |
 | Can it autorun a physical robot with no human? | No. Hardware is intentionally human-gated. |
-| Is SysID currently using IsaacLab-Newton from `es-rl/IsaacLab-Newton`? | No. The current implementation is the local log-based estimator in `agentic_sim2real/sysid.py`. |
+| Is SysID currently using IsaacLab-Newton from `es-rl/IsaacLab-Newton`? | Not by default. The local estimator in `agentic_sim2real/sysid.py` runs by default, and the portable `newton_sysid` skill runs only when `config.sysid.newton_command` is configured. |
 | What does current SysID estimate? | Delay, stiction/deadband proxy, contact summary, pose noise, reset scatter, action-scale bounds, and domain-randomization recommendations. |
-| Where should Newton SysID fit? | As a future portable `newton_sysid` skill that consumes aligned real data, runs IsaacLab-Newton fitting, writes fitted parameters/evidence, and feeds the evaluator/release gate. |
+| Where does Newton SysID fit? | `skills/newton_sysid` consumes canonical aligned records, writes fitted parameters/residual evidence, and remains optional unless `config.sysid.require_newton=true`. |
 
 ## Skill Portability Direction
 
@@ -115,8 +115,10 @@ Current skills are useful because they map to generic release questions:
 | `isaaclab_task_check` | Simulation task contract check | Every sim task needs observation/action/reward/artifact contract validation. |
 | `policy_artifact_audit` | Policy artifact audit | Any learned policy needs reproducible metadata and checkpoint evidence. |
 | `ros_preflight` | Middleware/deployment preflight | ROS is the current adapter; the skill concept generalizes to other deployment stacks. |
+| `real_data_quality_gate` | Data contract validation | Any real-data submission needs alignment, completeness, calibration, and consistency checks before SysID. |
 | `pose_repeatability` | Perception repeatability | Any vision or state-estimation pipeline needs measured repeatability. |
 | `sysid_step_response` | System identification evidence | Any sim2real transfer needs actuator, latency, friction, and contact evidence. |
+| `newton_sysid` | Optional physics SysID adapter | Newton fitting should be a portable skill that consumes canonical records, not robot-specific raw logs. |
 | `domain_randomization_update` | Sim parameter proposal | Any sim2real pipeline needs bounded randomization updates from data. |
 | `action_scale_sweep` | Controller/action range validation | Any policy deployment needs action scaling and saturation checks. |
 | `autoresearch_planner` | Experiment proposal and ranking | The self-improvement loop should be task-agnostic. |
@@ -234,8 +236,10 @@ skills/                         Atomic skill contracts
   isaaclab_task_check/skill.json
   policy_artifact_audit/skill.json
   ros_preflight/skill.json
+  real_data_quality_gate/skill.json
   pose_repeatability/skill.json
   sysid_step_response/skill.json
+  newton_sysid/skill.json
   domain_randomization_update/skill.json
   action_scale_sweep/skill.json
   autoresearch_planner/skill.json
@@ -252,6 +256,8 @@ embodiments/
       real_data/                UR example templates and sessions
 
 agentic_sim2real/
+  adapters.py                   Embodiment adapter and real-data source contract
+  data_quality.py                Pre-SysID quality gate for canonical records
   skill_harness.py              Skill runner, validators, scoreboard, release gate
   evaluation_loop.py            Agent/Evaluator/Critic/Release/Human trace
   autoresearch.py               Experiment planner
@@ -286,9 +292,11 @@ release gate decides whether the whole chain is good enough for human review.
 | `env_preflight` | `orchestrator_agent` | Check local tools and environment | Yes |
 | `isaaclab_task_check` | `sim_agent` | Validate task id, observations, gripper, action scale | Yes |
 | `policy_artifact_audit` | `sim_agent` | Check `agent.yaml`, `env.yaml`, checkpoint metadata | Yes |
-| `ros_preflight` | `orchestrator_agent` | Check ROS gear workflow config | Yes |
-| `pose_repeatability` | `perception_agent` | Validate shaft pose error under 1 cm | Yes |
+| `ros_preflight` | `orchestrator_agent` | Check deployment middleware config | Yes |
+| `real_data_quality_gate` | `evaluator_agent` | Validate aligned records, calibration, and data completeness before SysID | Yes |
+| `pose_repeatability` | `perception_agent` | Validate object pose error under the configured gate | Yes |
 | `sysid_step_response` | `sysid_agent` | Estimate delay, stiction, contact, SysID targets | Yes |
+| `newton_sysid` | `sysid_agent` | Optionally run IsaacLab-Newton fitting from canonical records | No, unless required in config |
 | `domain_randomization_update` | `dr_agent` | Propose bounded DR updates | Yes |
 | `action_scale_sweep` | `sysid_agent` | Propose safe action-scale candidates | Yes |
 | `autoresearch_planner` | `autoresearch_agent` | Generate and rank experiments | Yes |
@@ -520,7 +528,22 @@ DATASET=embodiments/manipulator/ur10e_gear_assembly/real_data/ur10e_day1 ./scrip
 ```
 
 The loader automatically uses `aligned/records.jsonl` when a session directory
-is passed as `--dataset`.
+is passed as `--dataset`. If aligned records are missing but CSV subfolders are
+complete, `run-harness` and `run-evaluation-loop` auto-create them through the
+adapter-based ingestor.
+
+Inspect a submitted session before running the full loop:
+
+```bash
+agentic-sim2real inspect-real-data \
+  --root . \
+  --session embodiments/manipulator/ur10e_gear_assembly/real_data/ur10e_day1
+```
+
+Raw `rosbag2` or image-only submissions are detected, but they need an
+embodiment `real_data.external_ingestor_command` that converts them into the
+same canonical `aligned/records.jsonl` contract. This keeps raw parsing modular
+instead of hardcoding UR topics into the core pipeline.
 
 ## Step By Step: Local Skill Harness
 
@@ -536,6 +559,31 @@ export AGENTIC_SIM2REAL_CONFIG=$PWD/configs/ur10e_gear_assembly.local.json
 
 Edit `configs/ur10e_gear_assembly.local.json` for your Isaac Lab root, Isaac
 ROS workspace, gripper type, `ROS_DOMAIN_ID`, and manipulator config path.
+
+To enable IsaacLab-Newton later, keep the core pipeline unchanged and configure
+the portable Newton skill:
+
+```json
+{
+  "sysid": {
+    "newton_enabled": true,
+    "require_newton": false,
+    "newton_root": "/path/to/IsaacLab-Newton",
+    "newton_command": [
+      "python3",
+      "path/to/newton_fit_entrypoint.py",
+      "--input",
+      "{input}",
+      "--output",
+      "{output}"
+    ]
+  }
+}
+```
+
+The command receives canonical aligned records and writes JSON evidence. If it
+is not configured, `newton_sysid` skips and the local SysID skill remains the
+active fallback.
 
 ### 2. List the skills
 
@@ -766,8 +814,10 @@ The release gate passes only when these are true:
 
 - all manifests are valid
 - every release-blocking offline skill passes
+- real-data quality gate passes before SysID
 - pose p95 error is under 1 cm
 - SysID evidence exists
+- Newton SysID either passes, is skipped as optional, or is explicitly required by config
 - DR updates stay bounded
 - action-scale candidate stays within contact-force limits
 - sim regression evidence is present
@@ -823,6 +873,7 @@ proposes bounded updates when it is not.
 ```bash
 PYTHONPYCACHEPREFIX=/tmp/agentic_sim2real_pycache python3 -m py_compile agentic_sim2real/*.py tests/test_pipeline.py
 PYTHONPATH=. python3 -m unittest discover -s tests
+PYTHONPATH=. python3 -m agentic_sim2real.cli --config configs/ur10e_gear_assembly.example.json inspect-real-data --session embodiments/manipulator/ur10e_gear_assembly/real_data/example_session --root .
 PYTHONPATH=. python3 -m agentic_sim2real.cli --config configs/ur10e_gear_assembly.example.json validate-skills --root .
 PYTHONPATH=. python3 -m agentic_sim2real.cli --config configs/ur10e_gear_assembly.example.json run-harness --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/agentic_sim2real_harness
 PYTHONPATH=. python3 -m agentic_sim2real.cli --config configs/ur10e_gear_assembly.example.json run-evaluation-loop --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/agentic_sim2real_eval

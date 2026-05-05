@@ -47,6 +47,14 @@ DEFAULTS: dict[str, Any] = {
         "max_recommended_delay_steps": 8,
         "precision_task": True,
     },
+    "sysid": {
+        "newton_enabled": False,
+        "require_newton": False,
+        "newton_root": "",
+        "newton_command": [],
+        "newton_timeout_s": 900,
+        "min_newton_confidence": 0.6,
+    },
     "safety": {
         "require_human_gate": True,
         "real_robot_gate_env": "I_ACCEPT_AGENTIC_SIM2REAL_REAL_ROBOT_RISK",
@@ -63,6 +71,7 @@ class PipelineConfig:
     perception: dict[str, Any] = field(default_factory=dict)
     isaac_ros: dict[str, Any] = field(default_factory=dict)
     agent: dict[str, Any] = field(default_factory=dict)
+    sysid: dict[str, Any] = field(default_factory=dict)
     safety: dict[str, Any] = field(default_factory=dict)
 
     def merged(self) -> dict[str, Any]:
@@ -72,6 +81,7 @@ class PipelineConfig:
             "perception": self.perception,
             "isaac_ros": self.isaac_ros,
             "agent": self.agent,
+            "sysid": self.sysid,
             "safety": self.safety,
         }
 
@@ -85,6 +95,7 @@ def load_config(path: str | Path) -> PipelineConfig:
         perception=dict(merged["perception"]),
         isaac_ros=dict(merged["isaac_ros"]),
         agent=dict(merged["agent"]),
+        sysid=dict(merged["sysid"]),
         safety=dict(merged["safety"]),
     )
 

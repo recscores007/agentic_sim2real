@@ -1,0 +1,20 @@
+{
+  "id": "real_data_quality_gate",
+  "name": "Real Data Quality Gate",
+  "owner_agent": "evaluator_agent",
+  "description": "Validate canonical real-data records before SysID, perception repeatability, AutoResearch, or release scoring run.",
+  "implementation": "real_data_quality_gate",
+  "depends_on": ["env_preflight"],
+  "inputs": ["dataset_jsonl_or_real_data_session", "embodiment_adapter", "config"],
+  "outputs": ["real_data_quality.json", "result.json"],
+  "validators": [
+    "aligned records must include consistent action and joint dimensions",
+    "minimum configured episode count must be present",
+    "object pose estimate and reference fields must be populated",
+    "embodiment-scoped sessions must include calibration metadata"
+  ],
+  "quality_gate": {"min_score": 0.7},
+  "human_required": false,
+  "release_blocking": true,
+  "real_robot": false
+}

@@ -12,9 +12,16 @@
     "accepted_pose_files": [
       "object_pose.csv"
     ],
+    "accepted_raw_sources": [
+      "aligned_records",
+      "csv_session",
+      "rosbag2",
+      "image_sequence"
+    ],
     "aligned_records": "real_data/example_session/aligned/records.jsonl",
     "canonical_pose_file": "object_pose.csv",
     "example_session": "real_data/example_session",
+    "external_ingestor_command": [],
     "templates": "real_data/templates"
   },
   "schema_version": "embodiment.v1",

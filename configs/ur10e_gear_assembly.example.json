@@ -39,6 +39,14 @@
     "max_recommended_delay_steps": 8,
     "precision_task": true
   },
+  "sysid": {
+    "newton_enabled": false,
+    "require_newton": false,
+    "newton_root": "",
+    "newton_command": [],
+    "newton_timeout_s": 900,
+    "min_newton_confidence": 0.6
+  },
   "safety": {
     "require_human_gate": true,
     "real_robot_gate_env": "I_ACCEPT_AGENTIC_SIM2REAL_REAL_ROBOT_RISK",

@@ -10,7 +10,7 @@ from .config import PipelineConfig, choose_task, command_env, load_config
 from .dataset import load_records
 from .embodiments import validate_embodiments
 from .evaluation_loop import run_evaluation_loop
-from .real_data import prepare_real_session
+from .real_data import ensure_aligned_dataset, inspect_real_session, prepare_real_session
 from .report import write_outputs
 from .safety import require_real_robot_gate
 from .skill_harness import load_manifests, run_harness, validate_all_manifests
@@ -39,10 +39,17 @@ def main(argv: list[str] | None = None) -> int:
     analyze.add_argument("--dataset", required=True)
     analyze.add_argument("--out", required=True)
 
+    inspect = sub.add_parser("inspect-real-data", help="Inspect an embodiment real_data session before alignment")
+    inspect.add_argument("--session", required=True)
+    inspect.add_argument("--root", default=".")
+    inspect.add_argument("--embodiment", default=None)
+
     prepare = sub.add_parser("prepare-real-data", help="Merge a real_data session into pipeline records.jsonl")
     prepare.add_argument("--session", required=True)
     prepare.add_argument("--out", default=None)
     prepare.add_argument("--tolerance-s", type=float, default=0.05)
+    prepare.add_argument("--root", default=".")
+    prepare.add_argument("--embodiment", default=None)
 
     harness = sub.add_parser("run-harness", help="Run the skill validation harness")
     harness.add_argument("--root", default=".")
@@ -77,8 +84,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_validate_embodiments(args.root)
     if args.cmd == "analyze":
         return cmd_analyze(config, args.dataset, args.out)
+    if args.cmd == "inspect-real-data":
+        return cmd_inspect_real_data(args.session, args.root, args.embodiment)
     if args.cmd == "prepare-real-data":
-        return cmd_prepare_real_data(args.session, args.out, args.tolerance_s)
+        return cmd_prepare_real_data(args.session, args.out, args.tolerance_s, args.root, args.embodiment)
     if args.cmd == "run-harness":
         return cmd_run_harness(args.root, args.config, args.dataset, args.out, args.include_real, args.skill, args.skill_dir)
     if args.cmd == "run-evaluation-loop":
@@ -142,7 +151,7 @@ def cmd_commands(config: PipelineConfig) -> int:
 
 
 def cmd_analyze(config: PipelineConfig, dataset_path: str, out_dir: str) -> int:
-    records = load_records(dataset_path)
+    records = load_records(ensure_aligned_dataset(dataset_path))
     gap = estimate_gap(records, config)
     plan = build_plan(gap, config)
     paths = write_outputs(out_dir, gap, plan)
@@ -151,6 +160,12 @@ def cmd_analyze(config: PipelineConfig, dataset_path: str, out_dir: str) -> int:
         print(f"- {name}: {path}")
     print(f"Transfer score: {plan['transfer_score']['score_0_to_1']} ({plan['transfer_score']['interpretation']})")
     return 0
+
+
+def cmd_inspect_real_data(session: str, root: str, embodiment_id: str | None) -> int:
+    report = inspect_real_session(session, root=root, embodiment_id=embodiment_id)
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if report["status"] in {"aligned_records_ready", "csv_session_ready"} else 1
 
 
 def cmd_list_skills(root: str, skill_dirs: list[str]) -> int:
@@ -195,8 +210,20 @@ def cmd_run_harness(
     return 0 if scoreboard["status"] == "pass" else 1
 
 
-def cmd_prepare_real_data(session: str, out: str | None, tolerance_s: float) -> int:
-    summary = prepare_real_session(session, out_path=out, tolerance_s=tolerance_s)
+def cmd_prepare_real_data(
+    session: str,
+    out: str | None,
+    tolerance_s: float,
+    root: str,
+    embodiment_id: str | None,
+) -> int:
+    summary = prepare_real_session(
+        session,
+        out_path=out,
+        tolerance_s=tolerance_s,
+        root=root,
+        embodiment_id=embodiment_id,
+    )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
 

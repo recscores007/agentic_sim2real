@@ -10,8 +10,10 @@ OUT="${2:-}"
 if [[ -n "${OUT}" ]]; then
   python3 -m agentic_sim2real.cli --config "${AGENTIC_SIM2REAL_CONFIG}" prepare-real-data \
     --session "${SESSION}" \
+    --root "${SCRIPT_DIR}/.." \
     --out "${OUT}"
 else
   python3 -m agentic_sim2real.cli --config "${AGENTIC_SIM2REAL_CONFIG}" prepare-real-data \
-    --session "${SESSION}"
+    --session "${SESSION}" \
+    --root "${SCRIPT_DIR}/.."
 fi

@@ -8,6 +8,7 @@ from typing import Any
 from .autoresearch import build_plan
 from .config import load_config
 from .dataset import load_records
+from .real_data import ensure_aligned_dataset
 from .skill_harness import run_harness
 from .sysid import estimate_gap
 
@@ -28,7 +29,8 @@ def run_evaluation_loop(
     out = Path(out_dir).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
     config = load_config(config_path)
-    records = load_records(dataset_path)
+    resolved_dataset_path = ensure_aligned_dataset(dataset_path, root=root_path)
+    records = load_records(resolved_dataset_path)
     gap = estimate_gap(records, config)
     plan = build_plan(gap, config)
     threshold_policy = load_threshold_policy(root_path, threshold_policy_path)
@@ -37,7 +39,7 @@ def run_evaluation_loop(
     scoreboard = run_harness(
         root=root_path,
         config_path=config_path,
-        dataset_path=dataset_path,
+        dataset_path=resolved_dataset_path,
         out_dir=out / "harness",
         include_real=include_real,
         skill_dirs=skill_dirs,

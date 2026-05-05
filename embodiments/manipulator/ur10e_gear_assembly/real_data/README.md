@@ -15,7 +15,15 @@ The pipeline needs one aligned file:
 embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>/aligned/records.jsonl
 ```
 
-You can create it from raw subfolders with:
+You can inspect a submitted session with:
+
+```bash
+agentic-sim2real inspect-real-data \
+  --root . \
+  --session embodiments/manipulator/ur10e_gear_assembly/real_data/example_session
+```
+
+You can create aligned records from CSV subfolders with:
 
 ```bash
 ./scripts/prepare_real_data.sh embodiments/manipulator/ur10e_gear_assembly/real_data/example_session
@@ -69,7 +77,7 @@ embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>/
 | `episode_labels/labels.csv` | Strongly recommended | Success/failure labels and failure modes |
 | `contact_data/contact.csv` | Recommended | Contact force or force proxy |
 | `camera_data/index.csv` | Recommended | Image/depth file provenance |
-| `calibration/calibration.json` | Recommended | Robot calibration, camera intrinsics/extrinsics, frame names |
+| `calibration/calibration.json` | Yes for embodiment sessions | Robot calibration, camera intrinsics/extrinsics, frame names |
 
 ## What The Human Provides
 
@@ -92,13 +100,17 @@ The converter creates JSONL rows like:
   "action": [0.01, 0.0, -0.006, 0.004, 0.001, 0.001],
   "joint_state": [0.10, -1.20, 1.31, -1.65, -1.57, 0.02],
   "joint_velocity": [0.01, 0.0, -0.01, 0.0, 0.0, 0.0],
-  "shaft_pose_estimate": [0.503, 0.104, 0.222, 0.0, 0.0, 0.010, 0.9999],
-  "shaft_pose_reference": [0.500, 0.100, 0.220, 0.0, 0.0, 0.0, 1.0],
+  "object_pose_estimate": [0.503, 0.104, 0.222, 0.0, 0.0, 0.010, 0.9999],
+  "object_pose_reference": [0.500, 0.100, 0.220, 0.0, 0.0, 0.0, 1.0],
   "contact_force": 4.0,
   "success": true,
   "failure_mode": null
 }
 ```
+
+The UR source CSV can still be named `shaft_pose.csv`. The aligned records use
+the portable `object_pose_*` fields so the same skills work for other
+embodiments.
 
 That is the format consumed by:
 

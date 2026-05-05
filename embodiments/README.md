@@ -50,3 +50,22 @@ Use `object_pose.csv` as the portable pose file name. Task-specific embodiments
 may keep an object-specific source file such as `shaft_pose.csv`; the generated
 pipeline records still use canonical `object_pose_estimate` and
 `object_pose_reference` fields.
+
+`embodiment.json` is also the adapter contract. Keep raw parsing choices here,
+not in core skills:
+
+```json
+{
+  "real_data": {
+    "canonical_pose_file": "object_pose.csv",
+    "accepted_pose_files": ["object_pose.csv"],
+    "accepted_raw_sources": ["aligned_records", "csv_session", "rosbag2", "image_sequence"],
+    "external_ingestor_command": []
+  }
+}
+```
+
+If a robot needs `rosbag2` or image-only ingestion, set
+`external_ingestor_command` to a command that writes the same canonical
+`aligned/records.jsonl` schema. The evaluator and skills should not need to
+know the robot's raw topic names.

@@ -1,20 +1,31 @@
 {
-  "id": "sysid_step_response",
-  "name": "Robot SysID Step Response",
-  "owner_agent": "sysid_agent",
+  "depends_on": [
+    "pose_repeatability",
+    "real_data_quality_gate"
+  ],
   "description": "Estimate robot delay, stiction/deadband proxy, contact force, and SysID targets from real logs.",
+  "human_required": true,
+  "id": "sysid_step_response",
   "implementation": "sysid_step_response",
-  "depends_on": ["pose_repeatability"],
-  "inputs": ["dataset_jsonl", "config"],
-  "outputs": ["gap_estimates.json", "result.json"],
+  "inputs": [
+    "dataset_jsonl",
+    "config"
+  ],
+  "name": "Robot SysID Step Response",
+  "outputs": [
+    "gap_estimates.json",
+    "result.json"
+  ],
+  "owner_agent": "sysid_agent",
+  "quality_gate": {
+    "min_score": 0.6
+  },
+  "real_robot": false,
+  "release_blocking": true,
   "validators": [
     "minimum configured episode count must be present",
     "delay estimate must be emitted",
     "stiction/deadband proxy must be emitted",
     "contact summary must be emitted"
-  ],
-  "quality_gate": {"min_score": 0.6},
-  "human_required": true,
-  "release_blocking": true,
-  "real_robot": false
+  ]
 }

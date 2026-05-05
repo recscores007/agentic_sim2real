@@ -70,11 +70,16 @@ returns.
 ## Autorun Boundary
 
 A complete embodiment-scoped real-data session can drive the offline pipeline
-without human intervention after it is converted to `aligned/records.jsonl`.
+without human intervention. If `aligned/records.jsonl` already exists, the
+harness uses it directly. If the session contains complete CSV subfolders, the
+harness auto-creates aligned records through the embodiment adapter before
+running skills.
 For the UR manipulator example, use
 `embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>`.
-That includes skill execution, AutoResearch proposal, evaluator scoring, critic
-review, and release-gate output.
+That includes real-data inspection, the `real_data_quality_gate`, SysID,
+AutoResearch proposal, evaluator scoring, critic review, and release-gate
+output. Raw `rosbag2` or image-only sessions are detected, then routed to an
+embodiment `real_data.external_ingestor_command` when one is configured.
 
 Physical robot motion is not part of offline autorun. The release gate always
 keeps `safe_to_autorun_robot: false`, and the hardware step requires explicit
@@ -82,12 +87,13 @@ human approval.
 
 ## SysID Boundary
 
-Current SysID is log-based and implemented in `agentic_sim2real/sysid.py`. It
-estimates delay, stiction/deadband, pose noise, reset scatter, contact summary,
-and bounded recommendations.
+Current default SysID is log-based and implemented in
+`agentic_sim2real/sysid.py`. It estimates delay, stiction/deadband, pose noise,
+reset scatter, contact summary, and bounded recommendations.
 
-The repo does not yet invoke IsaacLab-Newton. Newton fitting should be added as
-a portable `newton_sysid` skill, not embedded directly into a UR-specific skill.
+IsaacLab-Newton is represented by the portable `newton_sysid` skill. It is
+skipped by default, runs only when `config.sysid.newton_command` is configured,
+and can be made mandatory with `config.sysid.require_newton=true`.
 
 ## Five-Stage Evaluation
 

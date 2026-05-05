@@ -31,8 +31,10 @@ writes evidence.
 
 Examples:
 
-- `pose_repeatability` measures shaft pose p95 error.
+- `real_data_quality_gate` checks canonical record completeness before SysID.
+- `pose_repeatability` measures object pose p95 error.
 - `sysid_step_response` measures delay and stiction proxy.
+- `newton_sysid` optionally runs IsaacLab-Newton fitting from aligned records.
 - `action_scale_sweep` measures whether a candidate action scale is inside limits.
 
 The evaluator writes `evaluator_measurements.json`.
@@ -79,7 +81,9 @@ The human gate writes `human_hardware_gate.json`.
 Thresholds live in `threshold_policy.json` and are divided into:
 
 - hard safety thresholds
-- tutorial/spec thresholds
+- embodiment/spec thresholds
+- data-quality thresholds
+- SysID/Newton thresholds
 - statistical thresholds
 - regression thresholds
 
@@ -88,9 +92,11 @@ the candidate is releasable.
 
 ## IsaacLab-Newton Status
 
-The current repository does not run IsaacLab-Newton SysID. The active SysID path
-is the local log-based estimator in `agentic_sim2real/sysid.py`.
+The default SysID path is the local log-based estimator in
+`agentic_sim2real/sysid.py`.
 
-IsaacLab-Newton should be added as a separate portable skill, for example
-`newton_sysid`, that consumes aligned real data, fits parameters, writes
-evidence, and feeds the same evaluator and release gate.
+IsaacLab-Newton is represented by the portable `newton_sysid` skill. Configure
+`config.sysid.newton_command` to run a Newton fitting entrypoint. The skill
+receives canonical aligned records, writes fitted parameters and residual
+metrics, and feeds the same evaluator and release gate. It is optional unless
+`config.sysid.require_newton=true`.

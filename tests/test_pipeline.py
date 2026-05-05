@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
 from agentic_sim2real.cli import main
 from agentic_sim2real.config import choose_task, load_config, nominal_action_scale
+from agentic_sim2real.data_quality import evaluate_real_data_quality
 from agentic_sim2real.dataset import load_records
 from agentic_sim2real.embodiments import validate_embodiments
 from agentic_sim2real.evaluation_loop import run_evaluation_loop
-from agentic_sim2real.real_data import prepare_real_session
+from agentic_sim2real.real_data import inspect_real_session, prepare_real_session
 from agentic_sim2real.skill_harness import run_harness, validate_all_manifests
 from agentic_sim2real.sysid import estimate_gap
 
@@ -67,6 +69,8 @@ class PipelineTests(unittest.TestCase):
         result = validate_all_manifests(ROOT)
         self.assertEqual(result["status"], "pass")
         self.assertIn("autoresearch_planner", result["skills"])
+        self.assertIn("real_data_quality_gate", result["skills"])
+        self.assertIn("newton_sysid", result["skills"])
 
     def test_harness_writes_scoreboard(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -77,6 +81,8 @@ class PipelineTests(unittest.TestCase):
                 out_dir=tmp,
             )
             self.assertEqual(scoreboard["status"], "pass")
+            self.assertIn("real_data_quality_gate", scoreboard["skills"])
+            self.assertEqual(scoreboard["skills"]["newton_sysid"]["status"], "skip")
             self.assertIn("release_candidate_gate", scoreboard["skills"])
             self.assertTrue((Path(tmp) / "scoreboard.json").exists())
 
@@ -175,6 +181,77 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(len(records), 12)
             self.assertEqual(len(records[0].action), 6)
             self.assertGreater(len(records[0].shaft_pose_estimate), 0)
+
+    def test_inspect_real_data_uses_ur_adapter(self) -> None:
+        session = ROOT / "embodiments" / "manipulator" / "ur10e_gear_assembly" / "real_data" / "example_session"
+        report = inspect_real_session(session, root=ROOT)
+        self.assertEqual(report["status"], "aligned_records_ready")
+        self.assertEqual(report["adapter"]["id"], "manipulator/ur10e_gear_assembly")
+        self.assertIn("shaft_pose.csv", report["accepted_pose_files"])
+        self.assertTrue(report["quality_inputs"]["calibration_present"])
+
+    def test_data_quality_gate_reports_canonical_records(self) -> None:
+        cfg = load_config(ROOT / "configs" / "ur10e_gear_assembly.example.json")
+        session = ROOT / "embodiments" / "manipulator" / "ur10e_gear_assembly" / "real_data" / "example_session"
+        report = evaluate_real_data_quality(session, cfg, root=ROOT)
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["metrics"]["episodes"], 3)
+        self.assertEqual(report["metrics"]["missing_object_pose_estimate"], 0)
+
+    def test_harness_auto_prepares_raw_csv_session(self) -> None:
+        source = ROOT / "embodiments" / "manipulator" / "ur10e_gear_assembly" / "real_data" / "example_session"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            session = tmp_path / "real_data" / "session"
+            shutil.copytree(source, session)
+            shutil.rmtree(session / "aligned")
+            (session / "aligned").mkdir()
+            scoreboard = run_harness(
+                root=ROOT,
+                config_path=ROOT / "configs" / "ur10e_gear_assembly.example.json",
+                dataset_path=session,
+                out_dir=tmp_path / "out",
+            )
+            self.assertEqual(scoreboard["status"], "pass")
+            self.assertTrue((session / "aligned" / "records.jsonl").exists())
+
+    def test_newton_sysid_command_adapter_runs_from_canonical_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            runner = tmp_path / "fake_newton.py"
+            runner.write_text(
+                "\n".join(
+                    [
+                        "import json",
+                        "import os",
+                        "from pathlib import Path",
+                        "payload = json.loads(Path(os.environ['AGENTIC_SIM2REAL_NEWTON_INPUT_JSON']).read_text())",
+                        "assert Path(payload['dataset']).exists()",
+                        "Path(os.environ['AGENTIC_SIM2REAL_NEWTON_OUTPUT_JSON']).write_text(json.dumps({",
+                        "    'confidence': 0.82,",
+                        "    'quality_score': 0.88,",
+                        "    'metrics': {'newton_fit_used': True, 'records': payload['dataset']},",
+                        "    'fitted_parameters': {'joint_friction_scale': 1.1},",
+                        "}) + '\\n')",
+                    ]
+                )
+                + "\n"
+            )
+            config = json.loads((ROOT / "configs" / "ur10e_gear_assembly.example.json").read_text())
+            config["sysid"]["newton_enabled"] = True
+            config["sysid"]["newton_command"] = ["python3", str(runner)]
+            config_path = tmp_path / "config.json"
+            config_path.write_text(json.dumps(config) + "\n")
+            scoreboard = run_harness(
+                root=ROOT,
+                config_path=config_path,
+                dataset_path=ROOT / "sample_data" / "real_log_demo.jsonl",
+                out_dir=tmp_path / "out",
+                only_skill="newton_sysid",
+            )
+            result = scoreboard["skills"]["newton_sysid"]
+            self.assertEqual(result["status"], "pass")
+            self.assertTrue(result["metrics"]["newton_fit_used"])
 
     def test_prepare_generic_object_pose_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

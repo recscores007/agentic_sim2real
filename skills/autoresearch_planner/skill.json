@@ -1,19 +1,31 @@
 {
-  "id": "autoresearch_planner",
-  "name": "AutoResearch Planner",
-  "owner_agent": "autoresearch_agent",
+  "depends_on": [
+    "domain_randomization_update",
+    "action_scale_sweep",
+    "newton_sysid"
+  ],
   "description": "Generate hypotheses and rank experiments from the measured sim-real gaps.",
+  "human_required": false,
+  "id": "autoresearch_planner",
   "implementation": "autoresearch_planner",
-  "depends_on": ["domain_randomization_update", "action_scale_sweep"],
-  "inputs": ["gap_estimates", "skill_results"],
-  "outputs": ["autoresearch_plan.json", "result.json"],
+  "inputs": [
+    "gap_estimates",
+    "skill_results"
+  ],
+  "name": "AutoResearch Planner",
+  "outputs": [
+    "autoresearch_plan.json",
+    "result.json"
+  ],
+  "owner_agent": "autoresearch_agent",
+  "quality_gate": {
+    "min_score": 0.8
+  },
+  "real_robot": false,
+  "release_blocking": true,
   "validators": [
     "plan must include perception, SysID, fixture generalization, and action-scale experiments",
     "each experiment must state agent_does, human_does, parameter_change, and promote_if",
     "AutoResearch may promote only to human review, not unattended robot motion"
-  ],
-  "quality_gate": {"min_score": 0.8},
-  "human_required": false,
-  "release_blocking": true,
-  "real_robot": false
+  ]
 }

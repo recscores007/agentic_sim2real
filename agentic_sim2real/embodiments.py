@@ -72,6 +72,13 @@ def validate_embodiment(root: Path, embodiment_dir: Path) -> dict[str, Any]:
             errors.append("manifest embodiment_type does not match path")
         if manifest.get("name") != rel.parts[1]:
             errors.append("manifest name does not match path")
+        real_data_contract = manifest.get("real_data", {})
+        if not isinstance(real_data_contract.get("accepted_pose_files", []), list):
+            errors.append("real_data.accepted_pose_files must be a list")
+        if not isinstance(real_data_contract.get("accepted_raw_sources", []), list):
+            errors.append("real_data.accepted_raw_sources must be a list")
+        if not isinstance(real_data_contract.get("external_ingestor_command", []), list):
+            errors.append("real_data.external_ingestor_command must be a list")
 
     for dirname in REQUIRED_TOP_LEVEL_DIRS:
         if not (embodiment_dir / dirname).is_dir():
@@ -113,6 +120,7 @@ def validate_embodiment(root: Path, embodiment_dir: Path) -> dict[str, Any]:
         "status": "pass" if not errors else "fail",
         "errors": errors,
         "pose_file": pose_file,
+        "accepted_raw_sources": manifest.get("real_data", {}).get("accepted_raw_sources", []),
         "top_level_dirs": list(REQUIRED_TOP_LEVEL_DIRS),
         "session_dirs": list(REQUIRED_SESSION_DIRS),
     }
