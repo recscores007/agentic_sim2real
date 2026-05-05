@@ -1,0 +1,39 @@
+{
+  "camera_calibration": {
+    "camera_latency_s": 0.018,
+    "confidence": 0.86,
+    "decision": "tighten camera intrinsics and apply a small base-to-camera extrinsic correction before sim rollout comparison",
+    "observed_target_count": 36,
+    "reprojection_error_px": 0.82,
+    "source_video": "video_data/ur10_camera_calibration.m4v",
+    "suggested_extrinsic_delta": {
+      "rotation_rpy_rad": [0.003, -0.004, 0.006],
+      "translation_m": [0.004, -0.002, 0.006]
+    },
+    "suggested_intrinsics": {
+      "cx": 640.7,
+      "cy": 359.2,
+      "fx": 909.4,
+      "fy": 911.1
+    }
+  },
+  "contact_friction": {
+    "confidence": 0.79,
+    "decision": "center object and gripper friction DR around measured slip while keeping a conservative sweep for sim experiments",
+    "gripper_pad_dynamic_friction": 0.98,
+    "gripper_pad_static_friction": 1.18,
+    "object_dynamic_friction": 0.71,
+    "object_static_friction": 0.88,
+    "slip_ratio": 0.04,
+    "source_video": "video_data/ur10_contact_friction.m4v",
+    "stick_slip_events": 2
+  },
+  "domain_randomization_expectation": {
+    "friction_sweep_for_agent_experiments": [0.73, 1.03],
+    "gripper_pad_dynamic_friction": 0.98,
+    "gripper_pad_static_friction": 1.18,
+    "object_dynamic_friction": 0.71,
+    "object_static_friction": 0.88
+  },
+  "schema": "agentic_sim2real.video_analysis.v1"
+}

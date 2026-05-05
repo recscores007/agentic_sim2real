@@ -565,6 +565,28 @@ class PipelineTests(unittest.TestCase):
             friction = scoreboard["subchecks"]["domain_randomization_update"]["metrics"]["video_friction"]
             self.assertEqual(friction["object_material"]["static_friction"], 0.84)
 
+    def test_ur10e_video_golden_fixture_drives_camera_and_friction_dr(self) -> None:
+        dataset = ROOT / "golden" / "real_datasets" / "ur10e_video_tuning"
+        with tempfile.TemporaryDirectory() as tmp:
+            scoreboard = run_harness(
+                root=ROOT,
+                config_path=ROOT / "configs" / "ur10e_gear_assembly.example.json",
+                dataset_path=dataset,
+                out_dir=Path(tmp) / "out",
+            )
+            camera = scoreboard["subchecks"]["video_camera_tuning"]
+            friction = scoreboard["subchecks"]["video_contact_friction"]
+            dr = scoreboard["subchecks"]["domain_randomization_update"]["metrics"]
+
+            self.assertEqual(camera["status"], "pass")
+            self.assertEqual(friction["status"], "pass")
+            self.assertEqual(camera["metrics"]["camera_video_count"], 1)
+            self.assertEqual(camera["metrics"]["reprojection_error_px"], 0.82)
+            self.assertEqual(friction["metrics"]["object_static_friction"], 0.88)
+            self.assertTrue(dr["video_friction_applied"])
+            self.assertEqual(dr["video_friction"]["object_material"]["static_friction"], 0.88)
+            self.assertEqual(dr["video_friction"]["friction_sweep_for_agent_experiments"], [0.73, 1.03])
+
     def test_golden_data_readiness_stress_fixture_detects_expected_alerts(self) -> None:
         cfg = load_config(ROOT / "configs" / "ur10e_gear_assembly.example.json")
         dataset = ROOT / "golden" / "real_datasets" / "data_readiness_stress"

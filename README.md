@@ -189,6 +189,15 @@ Run a customer upload session that includes videos:
 ./scripts/run_uploaded_session.sh /path/to/customer/session
 ```
 
+Run the UR10e golden video fixture:
+
+```bash
+agentic-sim2real --config configs/ur10e_gear_assembly.example.json run-harness \
+  --root . \
+  --dataset golden/real_datasets/ur10e_video_tuning \
+  --out outputs/ur10e_video_tuning_harness
+```
+
 Expected video evidence layout:
 
 ```text
