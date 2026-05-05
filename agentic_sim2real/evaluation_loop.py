@@ -12,6 +12,7 @@ from .dataset import load_records
 from .llm_orchestrator import run_llm_orchestrated_loop
 from .real_data import ensure_aligned_dataset
 from .release_policy import release_profile, release_requires, release_waiver
+from .run_ui import write_pipeline_ui
 from .sysid import estimate_gap
 
 
@@ -85,6 +86,11 @@ def run_evaluation_loop(
         config_path=config_path,
         skill_ids=sorted(scoreboard.get("skills", {})),
         trace=trace,
+    )
+    trace["ui_artifacts"] = write_pipeline_ui(
+        out,
+        run_status="complete",
+        journal_path=out / "harness" / "llm_orchestrator" / "journal.jsonl",
     )
     (out / "evaluation_trace.json").write_text(json.dumps(trace, indent=2, sort_keys=True) + "\n")
     (out / "evaluation_trace.md").write_text(write_trace_markdown(trace) + "\n")

@@ -239,11 +239,26 @@ def build_pipeline_input(
     goal_cfg = dict(task_cfg.get("goal", {}))
     real_success = goal_cfg.get("real_success", config.agent.get("target_real_success", 0.8))
     gap_target = goal_cfg.get("gap_target", config.agent.get("gap_target", 0.1))
+    release_gap_target = goal_cfg.get("release_gap_target", gap_target)
+    mode = _pipeline_mode(config)
     input_payload = {
         "schema": f"{SCHEMA_VERSION}.pipeline_input",
         "description": "Task spec consumed by the agent and harness. This is the slide-22 contract.",
         "task": task,
-        "goal": {"real_success": _round_or_none(real_success), "gap_target": _round_or_none(gap_target)},
+        "mode": mode,
+        "goal": {
+            "real_success": _round_or_none(real_success),
+            "gap_target": _round_or_none(gap_target),
+            "release_gap_target": _round_or_none(release_gap_target),
+            "characterization": {
+                "primary": "fit sim parameters from trajectory, camera, pose, and contact data before policy training",
+                "success_labels_required": False,
+            },
+            "policy_release": {
+                "primary": "validate a trained policy candidate before human-supervised hardware release",
+                "success_labels_required": True,
+            },
+        },
         "scenarios": scenarios,
         "policy_ckpt": _policy_checkpoint(config),
         "sim_config": _sim_config(config, config_path),
@@ -282,7 +297,7 @@ def build_scorecard(
     plan = build_plan(gap, config)
     summary = gap["summary"]
     transfer_score = float(plan["transfer_score"]["score_0_to_1"])
-    sim2real_gap = round(max(0.0, 1.0 - transfer_score), 3)
+    release_gap_score = round(max(0.0, 1.0 - transfer_score), 3)
     previous_gap = _previous_gap(previous_scorecard)
     real_success = summary.get("success_rate")
     sim_success = _sim_success_rate(results)
@@ -293,14 +308,28 @@ def build_scorecard(
         "schema": f"{SCHEMA_VERSION}.scorecard",
         "description": "Unified per-run scorecard consumed by the agent and human reviewer. This is the slide-23 contract.",
         "task": _task_name(config),
+        "mode": _pipeline_mode(config),
         "run_id": run_id or _run_id(dataset_path, config_path),
         "git_sha": _git_sha(Path(config_path).parent if config_path else Path.cwd()),
-        "sim2real_gap": sim2real_gap,
-        "sim2real_gap_delta": None if previous_gap is None else round(sim2real_gap - previous_gap, 3),
+        "transfer_readiness_score": transfer_score,
+        "release_gap_score": release_gap_score,
+        "release_gap_score_delta": None if previous_gap is None else round(release_gap_score - previous_gap, 3),
+        "release_gap_target": _release_gap_target(config),
+        "sim2real_gap": release_gap_score,
+        "sim2real_gap_delta": None if previous_gap is None else round(release_gap_score - previous_gap, 3),
+        "score_meaning": {
+            "transfer_readiness_score": "Normalized evidence/readiness score from AutoResearch components. Higher is better.",
+            "release_gap_score": "Normalized remaining readiness gap, computed as max(0, 1 - transfer_readiness_score). Lower is better.",
+            "sim2real_gap": "Backward-compatible alias for release_gap_score, not a physical distance or standard industry metric.",
+            "target_source": "Configured by the user or release policy via task_spec.goal.release_gap_target, task_spec.goal.gap_target, or agent.gap_target.",
+            "formula": "transfer_readiness_score = 0.20*episode_score + 0.20*success_component + 0.15*delay_confidence + 0.15*deadband_confidence + 0.15*pose_score + 0.15*contact_score; release_gap_score = max(0, 1 - transfer_readiness_score)",
+        },
         "success_rate": {"sim": sim_success, "real": real_success},
         "regression_pp": regression_pp,
         "per_skill": per_skill,
         "per_skill_detail": results,
+        "characterization": _characterization_metrics(gap, plan, results),
+        "policy_release": _policy_release_metrics(config, scoreboard, real_success, sim_success, release_gap_score),
         "failure_modes": failure_modes,
         "cost": _cost(config, results),
         "verdict": _scorecard_verdict(scoreboard),
@@ -342,6 +371,7 @@ def build_pipeline_output(
         "schema": f"{SCHEMA_VERSION}.pipeline_output",
         "description": "Release artifact tying policy, sim config, changes, scorecard, and deploy command. This is the slide-24 contract.",
         "task": _task_name(config),
+        "mode": _pipeline_mode(config),
         "release_id": release_id,
         "status": status,
         "policy_ckpt": _policy_checkpoint(config),
@@ -349,9 +379,17 @@ def build_pipeline_output(
             **_sim_config(config, config_path),
             "patches": changes,
         },
+        "release_gap_score": {
+            "before": _round_or_none(baseline_gap),
+            "after": scorecard.get("release_gap_score"),
+            "target": scorecard.get("release_gap_target"),
+            "meaning": "normalized readiness gap; lower is better; not a physical sim2real distance",
+        },
+        "transfer_readiness_score": scorecard.get("transfer_readiness_score"),
         "sim2real_gap": {
             "before": _round_or_none(baseline_gap),
             "after": scorecard.get("sim2real_gap"),
+            "deprecated_alias_for": "release_gap_score",
         },
         "success_real": {
             "before": _round_or_none(baseline_success),
@@ -371,6 +409,8 @@ def build_pipeline_output(
         },
         "deploy": _deploy_command(release_id, status),
         "safe_to_autorun_robot": False,
+        "characterization": scorecard.get("characterization", {}),
+        "policy_release": scorecard.get("policy_release", {}),
         "human_approval": {
             "hardware_approval_status": scoreboard.get("hardware_approval_status", "not_requested"),
             "required": True,
@@ -414,7 +454,9 @@ def render_pipeline_input_markdown(payload: dict[str, Any]) -> str:
             "# Pipeline Input",
             "",
             f"- Task: {payload['task']}",
-            f"- Goal: real_success >= {payload['goal']['real_success']}, gap <= {payload['goal']['gap_target']}",
+            f"- Mode: {payload.get('mode', 'characterization')}",
+            "- Characterization goal: tune sim parameters from trajectory/camera/contact evidence",
+            f"- Policy release goal: real_success >= {payload['goal']['real_success']}, release_gap_score <= {payload['goal']['release_gap_target']}",
             f"- Scenarios: {', '.join(payload['scenarios'])}",
             f"- Policy checkpoint: `{payload['policy_ckpt']}`",
             f"- Sim config: {payload['sim_config']['engine']} `{payload['sim_config']['hash']}`",
@@ -427,22 +469,43 @@ def render_pipeline_input_markdown(payload: dict[str, Any]) -> str:
 
 
 def render_scorecard_markdown(payload: dict[str, Any]) -> str:
-    delta = payload.get("sim2real_gap_delta")
+    delta = payload.get("release_gap_score_delta", payload.get("sim2real_gap_delta"))
     delta_text = "n/a" if delta is None else f"{delta:+.3f}"
     lines = [
         "# Scorecard",
         "",
         f"- Task: {payload['task']}",
+        f"- Mode: {payload.get('mode', 'characterization')}",
         f"- Run: `{payload['run_id']}`",
         f"- Verdict: {payload['verdict']}",
-        f"- Sim2real gap: {payload['sim2real_gap']} ({delta_text})",
+        f"- Transfer readiness score: {payload.get('transfer_readiness_score')} (higher is better)",
+        f"- Release gap score: {payload.get('release_gap_score', payload['sim2real_gap'])} ({delta_text}, lower is better)",
+        "- Score note: release_gap_score is a normalized readiness gap, not a physical sim2real distance.",
         f"- Success rate: sim={payload['success_rate']['sim']} real={payload['success_rate']['real']}",
         f"- Regression: {payload['regression_pp']} pp",
         f"- Recommended next skill: {payload['recommended_skill']}",
         "",
-        "## Per Skill",
+        "## Characterization",
         "",
     ]
+    char = payload.get("characterization", {})
+    for group in ["trajectory_data", "actuator_latency", "camera_pose_noise", "contact", "tuning_outputs"]:
+        if group in char:
+            lines.append(f"- {group}: {char[group]}")
+    policy = payload.get("policy_release", {})
+    lines.extend(
+        [
+            "",
+            "## Policy Release",
+            "",
+            f"- Real success: {policy.get('success', {}).get('real')}",
+            f"- Target real success: {policy.get('success', {}).get('real_target')}",
+            f"- Hardware approval: {policy.get('hardware_approval_status')}",
+            "",
+            "## Per Skill",
+            "",
+        ]
+    )
     for skill, score in payload["per_skill"].items():
         detail = payload["per_skill_detail"].get(skill, {})
         lines.append(f"- {skill}: {score:.3f} ({detail.get('status', 'unknown')})")
@@ -460,10 +523,12 @@ def render_pipeline_output_markdown(payload: dict[str, Any]) -> str:
         "# Pipeline Output",
         "",
         f"- Release: `{payload['release_id']}`",
+        f"- Mode: {payload.get('mode', 'characterization')}",
         f"- Status: {payload['status']}",
         f"- Policy: `{payload['policy_ckpt']}`",
         f"- Sim config: `{payload['sim_config']['hash']}`",
-        f"- Sim2real gap: {payload['sim2real_gap']['before']} -> {payload['sim2real_gap']['after']}",
+        f"- Release gap score: {payload['release_gap_score']['before']} -> {payload['release_gap_score']['after']} (target {payload['release_gap_score']['target']})",
+        "- Score note: release_gap_score is a normalized readiness gap, not a physical sim2real distance.",
         f"- Real success: {payload['success_real']['before']} -> {payload['success_real']['after']}",
         f"- Iterations: {payload['used']['iters']}",
         f"- GPU hours: {payload['used']['gpu_hr']}",
@@ -492,6 +557,21 @@ def _records_by_episode(records: list[Record]) -> dict[int, list[Record]]:
 
 def _task_name(config: PipelineConfig) -> str:
     return str(config.task_spec.get("task") or choose_task(config))
+
+
+def _pipeline_mode(config: PipelineConfig) -> str:
+    raw = str(config.task_spec.get("mode") or "characterization").strip().lower()
+    aliases = {
+        "characterize": "characterization",
+        "characterization_mode": "characterization",
+        "tuning": "characterization",
+        "policy": "policy_release",
+        "release": "policy_release",
+        "policy-release": "policy_release",
+        "policy_release_mode": "policy_release",
+    }
+    mode = aliases.get(raw, raw)
+    return mode if mode in {"characterization", "policy_release"} else "characterization"
 
 
 def _rollout_id(episode: int, records: list[Record]) -> str:
@@ -747,6 +827,103 @@ def _collect_patches(results: dict[str, dict[str, Any]]) -> list[dict[str, Any]]
         if result and result.get("status") == "pass":
             patches.append({"skill": skill, "patch": "fitted physics parameters available", "status": result.get("status"), "metrics": metrics})
     return patches
+
+
+def _release_gap_target(config: PipelineConfig) -> float | None:
+    goal_cfg = dict(config.task_spec.get("goal", {}))
+    return _round_or_none(
+        goal_cfg.get("release_gap_target", goal_cfg.get("gap_target", config.agent.get("gap_target", 0.1)))
+    )
+
+
+def _characterization_metrics(gap: dict[str, Any], plan: dict[str, Any], results: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    summary = gap.get("summary", {})
+    delay = gap.get("delay", {})
+    deadband = gap.get("deadband_stiction_proxy", {})
+    pose = gap.get("object_pose_noise", {})
+    contact = gap.get("contact", {})
+    recommendations = gap.get("recommendations", {})
+    real_data_quality = results.get("real_data_quality_gate", {}).get("metrics", {})
+    return {
+        "purpose": "Use real trajectory, camera, pose, and contact data to tune sim parameters before policy training.",
+        "trajectory_data": {
+            "episodes": summary.get("episodes"),
+            "records": summary.get("records"),
+            "estimated_rate_hz": summary.get("estimated_rate_hz"),
+            "joint_velocity_coverage": real_data_quality.get("joint_velocity_coverage"),
+            "success_labels_required": False,
+        },
+        "actuator_latency": {
+            "delay_steps": delay.get("delay_steps"),
+            "delay_seconds": delay.get("delay_seconds"),
+            "delay_confidence": delay.get("confidence"),
+            "deadband_command_norm": deadband.get("deadband_command_norm"),
+            "swallowed_command_ratio": deadband.get("swallowed_command_ratio"),
+            "deadband_confidence": deadband.get("confidence"),
+        },
+        "camera_pose_noise": {
+            "samples": pose.get("samples"),
+            "position_error_mean_m": pose.get("position_error_mean_m"),
+            "position_error_p95_m": pose.get("position_error_p95_m"),
+            "orientation_error_mean_deg": pose.get("orientation_error_mean_deg"),
+            "orientation_error_p95_deg": pose.get("orientation_error_p95_deg"),
+        },
+        "contact": {
+            "samples": contact.get("samples"),
+            "mean_force_n": contact.get("mean_force_n"),
+            "p95_force_n": contact.get("p95_force_n"),
+            "peak_force_n": contact.get("peak_force_n"),
+            "over_limit_ratio": contact.get("over_limit_ratio"),
+            "force_limit_n": contact.get("force_limit_n"),
+        },
+        "sysid_backends": {
+            "local_log_estimator": "used",
+            "newton_sysid": _skill_status(results, "newton_sysid"),
+            "pace_sysid": _skill_status(results, "pace_sysid"),
+        },
+        "tuning_outputs": {
+            "action_scale_candidate": recommendations.get("action_scale", {}).get("suggested"),
+            "domain_randomization_families": sorted((recommendations.get("domain_randomization") or {}).keys()),
+            "sysid_target_count": len(recommendations.get("sysid_targets", [])),
+            "autoresearch_experiments": [item.get("id") for item in plan.get("experiments", [])],
+        },
+    }
+
+
+def _policy_release_metrics(
+    config: PipelineConfig,
+    scoreboard: dict[str, Any],
+    real_success: float | None,
+    sim_success: float | None,
+    release_gap_score: float,
+) -> dict[str, Any]:
+    target_success = dict(config.task_spec.get("goal", {})).get("real_success", config.agent.get("target_real_success", 0.8))
+    return {
+        "purpose": "Use this lane only after a trained policy candidate and release evidence exist.",
+        "success": {
+            "sim": sim_success,
+            "real": real_success,
+            "real_target": _round_or_none(target_success),
+            "real_success_labels_present": real_success is not None,
+        },
+        "release_gap_score": {
+            "value": release_gap_score,
+            "target": _release_gap_target(config),
+            "target_decided_by": "user config or release policy, not the LLM",
+            "meaning": "normalized release-readiness gap; lower is better; not a physical distance",
+        },
+        "release_gate_status": scoreboard.get("status"),
+        "human_review_readiness": scoreboard.get("human_review_readiness", "not_ready"),
+        "release_candidate_ready": bool(scoreboard.get("release_candidate_ready", False)),
+        "hardware_approval_status": scoreboard.get("hardware_approval_status", "not_requested"),
+        "safe_to_autorun_robot": False,
+    }
+
+
+def _skill_status(results: dict[str, dict[str, Any]], skill_id: str) -> str:
+    if skill_id not in results:
+        return "not_run"
+    return str(results.get(skill_id, {}).get("status", "unknown"))
 
 
 def _baseline_success_from_results(results: dict[str, dict[str, Any]]) -> float | None:

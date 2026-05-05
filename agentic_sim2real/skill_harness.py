@@ -17,6 +17,7 @@ from .pace_bridge import run_pace_bridge
 from .preflight import run_preflight
 from .real_data import ensure_aligned_dataset
 from .release_policy import is_sample_policy_artifact_path, release_profile, release_requires, release_waiver
+from .run_ui import write_pipeline_ui
 from .safety import require_real_robot_gate
 from .sysid import estimate_gap
 
@@ -314,6 +315,7 @@ def write_harness_artifacts(
         config_path=ctx.config_path,
         skill_ids=sorted(manifests),
     )
+    artifact_paths.update(write_pipeline_ui(ctx.out_dir, run_status="complete"))
     scoreboard["artifacts"] = artifact_paths
     (ctx.out_dir / "scoreboard.json").write_text(json.dumps(scoreboard, indent=2, sort_keys=True) + "\n")
     return scoreboard

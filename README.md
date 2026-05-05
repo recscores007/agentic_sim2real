@@ -151,9 +151,21 @@ outputs/<run>/llm_orchestrator/journal.jsonl
 outputs/<run>/llm_orchestrator/steps/step_###_context.json
 outputs/<run>/llm_orchestrator/steps/step_###_decision.json
 outputs/<run>/llm_orchestrator/scorecards/step_###_<skill_id>/scorecard.json
+outputs/<run>/ui/index.html
+outputs/<run>/ui/state.json
 outputs/<run>/scoreboard.json
 outputs/<run>/skills/<skill_id>/
 ```
+
+The generated dashboard shows the pipeline in two lanes:
+
+- `characterization`: trajectory/camera/contact evidence used to tune sim
+  parameters before policy training
+- `policy_release`: success-rate, regression, release-gate, and human hardware
+  approval evidence after a trained policy candidate exists
+
+The companion `ui/state.json` is the agent-readable version for publishing into
+a web service, notebook, or CI artifact viewer.
 
 Every run also writes the slide 21-24 contract as JSON plus Markdown views:
 
@@ -169,12 +181,18 @@ The same JSON drives the agent's next action and the human review view.
 | Artifact | Slide Contract Fields |
 | --- | --- |
 | `rollout_data.json` | `rollout_id`, `task`, `scenario`, `seed`, `streams`, `labels`, `outcome`, `calibration`, `sha256` |
-| `pipeline_input.json` | `task`, `goal`, `scenarios`, `policy_ckpt`, `sim_config`, `real_data`, `skills_allowed`, `budget`, `kill_criteria`, `owner`, `submitted` |
-| `scorecard.json` | `task`, `run_id`, `git_sha`, `sim2real_gap`, `success_rate`, `regression_pp`, `per_skill`, `failure_modes`, `cost`, `verdict` |
-| `pipeline_output.json` | `task`, `release_id`, `status`, `policy_ckpt`, `sim_config`, `sim2real_gap`, `success_real`, `changes`, `used`, `provenance`, `deploy` |
+| `pipeline_input.json` | `task`, `mode`, `goal`, `scenarios`, `policy_ckpt`, `sim_config`, `real_data`, `skills_allowed`, `budget`, `kill_criteria`, `owner`, `submitted` |
+| `scorecard.json` | `task`, `mode`, `run_id`, `git_sha`, `transfer_readiness_score`, `release_gap_score`, `characterization`, `policy_release`, `success_rate`, `regression_pp`, `per_skill`, `failure_modes`, `cost`, `verdict` |
+| `pipeline_output.json` | `task`, `mode`, `release_id`, `status`, `policy_ckpt`, `sim_config`, `release_gap_score`, `success_real`, `characterization`, `policy_release`, `changes`, `used`, `provenance`, `deploy` |
 
 The rule is simple: if the LLM cannot point to a skill result, metric,
 scoreboard entry, critic finding, or release decision, it is only a suggestion.
+
+`sim2real_gap` is still present as a backward-compatible alias, but the clearer
+field is `release_gap_score`. It is a normalized release-readiness gap, not a
+physical industry-standard sim2real distance. Its target comes from user config
+or release policy: `task_spec.goal.release_gap_target`, `task_spec.goal.gap_target`,
+or `agent.gap_target`.
 
 ## Release Profiles
 

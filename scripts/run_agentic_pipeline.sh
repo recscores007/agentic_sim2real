@@ -17,3 +17,5 @@ echo
 echo "Agentic pipeline outputs:"
 echo "  ${OUT}/evaluation_trace.md"
 echo "  ${OUT}/harness/llm_orchestrator/journal.jsonl"
+echo "  ${OUT}/ui/index.html"
+echo "  ${OUT}/ui/state.json"

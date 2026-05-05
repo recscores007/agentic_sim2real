@@ -101,9 +101,22 @@ class PipelineTests(unittest.TestCase):
             scorecard = json.loads((Path(tmp) / "scorecard.json").read_text())
             self.assertEqual(scorecard["schema"], "agentic_sim2real.slide_contract.v1.scorecard")
             self.assertIn("sim2real_gap", scorecard)
+            self.assertEqual(scorecard["mode"], "characterization")
+            self.assertIn("release_gap_score", scorecard)
+            self.assertIn("transfer_readiness_score", scorecard)
+            self.assertIn("characterization", scorecard)
+            self.assertIn("policy_release", scorecard)
             pipeline_output = json.loads((Path(tmp) / "pipeline_output.json").read_text())
             self.assertEqual(pipeline_output["schema"], "agentic_sim2real.slide_contract.v1.pipeline_output")
+            self.assertIn("release_gap_score", pipeline_output)
             self.assertFalse(pipeline_output["safe_to_autorun_robot"])
+            artifacts = scoreboard["artifacts"]
+            self.assertTrue(Path(artifacts["ui"]).exists())
+            self.assertTrue(Path(artifacts["state"]).exists())
+            ui_state = json.loads(Path(artifacts["state"]).read_text())
+            self.assertEqual(ui_state["schema_version"], "agentic_sim2real.pipeline_ui.v1")
+            self.assertEqual(ui_state["mode"], "characterization")
+            self.assertIn("workflow", ui_state)
 
     def test_stronger_preflight_reports_sysid_backends(self) -> None:
         cfg = load_config(ROOT / "configs" / "ur10e_gear_assembly.example.json")
@@ -214,6 +227,9 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue((Path(tmp) / "scorecard.json").exists())
             self.assertTrue((Path(tmp) / "pipeline_output.md").exists())
             self.assertIn("slide_contract_artifacts", trace)
+            self.assertIn("ui_artifacts", trace)
+            self.assertTrue(Path(trace["ui_artifacts"]["ui"]).exists())
+            self.assertTrue(Path(trace["ui_artifacts"]["state"]).exists())
 
     def test_llm_orchestrator_runs_skills_and_writes_journal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -236,8 +252,21 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(lines[0]["status"], "skill_completed")
             self.assertIn("scorecard", lines[0])
             self.assertTrue(Path(lines[0]["scorecard"]["scorecard"]).exists())
+            self.assertIn("ui_artifacts", summary)
+            for key in ["ui", "state"]:
+                self.assertTrue(Path(summary["ui_artifacts"][key]).exists())
+            state = json.loads(Path(summary["ui_artifacts"]["state"]).read_text())
+            self.assertEqual(state["schema_version"], "agentic_sim2real.pipeline_ui.v1")
+            self.assertEqual(state["run"]["status"], "complete")
+            self.assertFalse(state["run"]["safe_to_autorun_robot"])
+            self.assertFalse(state["scoreboard"]["safe_to_autorun_robot"])
+            self.assertIn("pipeline_input", state)
+            self.assertIn("rollout_summary", state)
+            self.assertGreaterEqual(len(state["journal"]), 15)
+            self.assertIn("characterization", state)
+            self.assertIn("policy_release", state)
             artifacts = summary["scoreboard"]["artifacts"]
-            for key in ["rollout_data", "pipeline_input", "scorecard", "pipeline_output"]:
+            for key in ["rollout_data", "pipeline_input", "scorecard", "pipeline_output", "ui", "state"]:
                 self.assertTrue(Path(artifacts[key]).exists())
             final_output = json.loads(Path(artifacts["pipeline_output"]).read_text())
             self.assertEqual(final_output["schema"], "agentic_sim2real.slide_contract.v1.pipeline_output")
@@ -291,6 +320,8 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue(
                 any("release_candidate_gate cannot run" in reason for reason in lines[0]["guardrail"]["reasons"])
             )
+            self.assertIn("ui_artifacts", summary)
+            self.assertTrue(Path(summary["ui_artifacts"]["ui"]).exists())
             first_completed = next(entry for entry in lines if entry["status"] == "skill_completed")
             self.assertTrue(Path(first_completed["scorecard"]["scorecard"]).exists())
 

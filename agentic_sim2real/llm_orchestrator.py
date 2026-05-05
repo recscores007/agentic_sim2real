@@ -9,6 +9,7 @@ from typing import Any
 
 from .artifacts import write_scorecard_artifacts
 from .config import PipelineConfig
+from .run_ui import write_pipeline_ui
 from .skill_harness import (
     HarnessContext,
     SkillManifest,
@@ -412,6 +413,11 @@ def run_llm_orchestrated_loop(
         results,
         require_all_release_blocking=True,
     )
+    ui_artifacts = write_pipeline_ui(
+        ctx.out_dir,
+        run_status="complete",
+        journal_path=journal_path,
+    )
     summary = {
         "status": "pass" if scoreboard["status"] == "pass" and stop_reason in {"human_review_requested", "llm_stopped"} else "fail",
         "orchestrator_status": stop_reason,
@@ -422,6 +428,7 @@ def run_llm_orchestrated_loop(
         "gap_hints": initial_gap_hints,
         "journal": str(journal_path),
         "scoreboard": scoreboard,
+        "ui_artifacts": ui_artifacts,
     }
     (orchestrator_dir / "orchestrator_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     return summary

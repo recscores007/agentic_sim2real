@@ -55,6 +55,7 @@ DEFAULTS: dict[str, Any] = {
         "gap_target": 0.1,
     },
     "task_spec": {
+        "mode": "characterization",
         "task": "",
         "goal": {},
         "scenarios": [],

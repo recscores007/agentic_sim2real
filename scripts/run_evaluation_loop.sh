@@ -17,6 +17,8 @@ echo
 echo "Evaluation trace:"
 echo "  ${OUT}/evaluation_trace.md"
 echo "  ${OUT}/harness/llm_orchestrator/journal.jsonl"
+echo "  ${OUT}/ui/index.html"
+echo "  ${OUT}/ui/state.json"
 echo "Slide-style artifacts:"
 echo "  ${OUT}/rollout_data.json"
 echo "  ${OUT}/pipeline_input.json"
