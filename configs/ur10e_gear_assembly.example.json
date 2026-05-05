@@ -42,7 +42,48 @@
     "target_real_episodes": 10,
     "min_real_episodes_for_gate": 3,
     "max_recommended_delay_steps": 8,
-    "precision_task": true
+    "precision_task": true,
+    "target_real_success": 0.8,
+    "gap_target": 0.1
+  },
+  "task_spec": {
+    "task": "Isaac-Deploy-GearAssembly-UR10e-2F140-v0",
+    "goal": {
+      "real_success": 0.8,
+      "gap_target": 0.1
+    },
+    "scenarios": ["gear_assembly"],
+    "policy_ckpt": "golden/sample_inputs/policy_artifacts",
+    "sim_config": {
+      "engine": "isaac",
+      "hash": ""
+    },
+    "real_data": {
+      "source": "embodiments/manipulator/ur10e_gear_assembly/real_data/example_session",
+      "rollouts": null
+    },
+    "skills_allowed": [
+      "real_data_quality_gate",
+      "sysid_step_response",
+      "newton_sysid",
+      "pace_sysid",
+      "domain_randomization_update",
+      "action_scale_sweep",
+      "sim_eval_regression",
+      "isaaclab_rollout_regression"
+    ],
+    "budget": {
+      "gpu_hr": 20.0,
+      "wall_hr": 6.0
+    },
+    "kill_criteria": {
+      "max_iters": 5,
+      "min_delta": 0.01
+    },
+    "owner": "unassigned",
+    "submitted": "not_set",
+    "baseline_gap": null,
+    "baseline_real_success": null
   },
   "policy": {
     "artifact_dir": "golden/sample_inputs/policy_artifacts",

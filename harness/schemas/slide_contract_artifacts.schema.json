@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agentic Sim2Real Slide Contract Artifacts",
+  "description": "Common envelope for slide 21-24 artifacts: rollout_data, pipeline_input, scorecard, and pipeline_output.",
+  "type": "object",
+  "required": ["schema", "description"],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "pattern": "^agentic_sim2real\\.slide_contract\\.v1\\."
+    },
+    "description": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

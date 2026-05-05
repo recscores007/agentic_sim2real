@@ -12,3 +12,10 @@ python3 -m agentic_sim2real.cli --config "${AGENTIC_SIM2REAL_CONFIG}" run-harnes
   --dataset "${DATASET}" \
   --out "${OUT}" \
   "$@"
+
+echo
+echo "Harness artifacts:"
+echo "  ${OUT}/rollout_data.json"
+echo "  ${OUT}/pipeline_input.json"
+echo "  ${OUT}/scorecard.json"
+echo "  ${OUT}/pipeline_output.json"

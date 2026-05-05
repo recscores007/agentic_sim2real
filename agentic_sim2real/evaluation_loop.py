@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .artifacts import write_slide_contract_bundle
 from .autoresearch import build_plan
 from .config import load_config
 from .dataset import load_records
@@ -75,6 +76,16 @@ def run_evaluation_loop(
         "release_gate_decides": decision,
         "human_approves_hardware": human_gate,
     }
+    trace["slide_contract_artifacts"] = write_slide_contract_bundle(
+        resolved_dataset_path,
+        config,
+        out,
+        scoreboard.get("skills", {}),
+        scoreboard,
+        config_path=config_path,
+        skill_ids=sorted(scoreboard.get("skills", {})),
+        trace=trace,
+    )
     (out / "evaluation_trace.json").write_text(json.dumps(trace, indent=2, sort_keys=True) + "\n")
     (out / "evaluation_trace.md").write_text(write_trace_markdown(trace) + "\n")
     return trace

@@ -150,9 +150,28 @@ After any run, inspect:
 outputs/<run>/llm_orchestrator/journal.jsonl
 outputs/<run>/llm_orchestrator/steps/step_###_context.json
 outputs/<run>/llm_orchestrator/steps/step_###_decision.json
+outputs/<run>/llm_orchestrator/scorecards/step_###_<skill_id>/scorecard.json
 outputs/<run>/scoreboard.json
 outputs/<run>/skills/<skill_id>/
 ```
+
+Every run also writes the slide 21-24 contract as JSON plus Markdown views:
+
+```text
+outputs/<run>/rollout_data.json      # rollout record per episode
+outputs/<run>/pipeline_input.json    # task spec the agent reads
+outputs/<run>/scorecard.json         # unified run scorecard
+outputs/<run>/pipeline_output.json   # final release artifact
+```
+
+The same JSON drives the agent's next action and the human review view.
+
+| Artifact | Slide Contract Fields |
+| --- | --- |
+| `rollout_data.json` | `rollout_id`, `task`, `scenario`, `seed`, `streams`, `labels`, `outcome`, `calibration`, `sha256` |
+| `pipeline_input.json` | `task`, `goal`, `scenarios`, `policy_ckpt`, `sim_config`, `real_data`, `skills_allowed`, `budget`, `kill_criteria`, `owner`, `submitted` |
+| `scorecard.json` | `task`, `run_id`, `git_sha`, `sim2real_gap`, `success_rate`, `regression_pp`, `per_skill`, `failure_modes`, `cost`, `verdict` |
+| `pipeline_output.json` | `task`, `release_id`, `status`, `policy_ckpt`, `sim_config`, `sim2real_gap`, `success_real`, `changes`, `used`, `provenance`, `deploy` |
 
 The rule is simple: if the LLM cannot point to a skill result, metric,
 scoreboard entry, critic finding, or release decision, it is only a suggestion.
@@ -458,6 +477,7 @@ embodiments/
 
 agentic_sim2real/
   adapters.py                   Embodiment adapter and real-data source contract
+  artifacts.py                  Slide 21-24 JSON and Markdown artifact writers
   data_quality.py                Pre-SysID quality gate for canonical records
   llm_orchestrator.py            LLM decision loop, guardrails, journal
   skill_harness.py              Skill runner, validators, scoreboard, release gate
@@ -606,6 +626,10 @@ outputs/evaluation_demo/
   human_hardware_gate.json
   evaluation_trace.json
   evaluation_trace.md
+  rollout_data.json
+  pipeline_input.json
+  scorecard.json
+  pipeline_output.json
 ```
 
 What each role owns:

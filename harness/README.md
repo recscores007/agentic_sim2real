@@ -10,6 +10,8 @@ Validation layers:
 4. Release validation: blocking failures prevent promotion to human review.
 
 The manifest contract is documented in `schemas/skill_manifest.schema.json`.
+The slide-style run artifacts share the envelope in
+`schemas/slide_contract_artifacts.schema.json`.
 The threshold policy is documented in `threshold_policy.json`.
 
 Default command:
@@ -45,8 +47,21 @@ Outputs:
 outputs/harness_demo/
   scoreboard.json
   release_candidate.json
+  rollout_data.json
+  pipeline_input.json
+  scorecard.json
+  pipeline_output.json
   skills/<skill_id>/result.json
 ```
+
+The four slide-style artifacts mirror the deck contract:
+
+| Artifact | Purpose |
+| --- | --- |
+| `rollout_data.json` | One rollout record per real episode |
+| `pipeline_input.json` | Task spec consumed by the LLM orchestrator |
+| `scorecard.json` | Unified run scorecard returned after the run |
+| `pipeline_output.json` | Final release artifact, including safety status |
 
 The harness may promote a candidate to human review. It never authorizes
 unattended robot motion.
@@ -136,6 +151,10 @@ outputs/evaluation_demo/
   critic_challenges.json
   release_decision.json
   human_hardware_gate.json
+  rollout_data.json
+  pipeline_input.json
+  scorecard.json
+  pipeline_output.json
   evaluation_trace.md
 ```
 

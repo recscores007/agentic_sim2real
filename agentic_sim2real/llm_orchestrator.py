@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .artifacts import write_scorecard_artifacts
 from .config import PipelineConfig
 from .skill_harness import (
     HarnessContext,
@@ -324,6 +325,7 @@ def run_llm_orchestrated_loop(
     journal: list[dict[str, Any]] = []
     invalid_decisions = 0
     stop_reason = "max_steps_exhausted"
+    previous_scorecard: dict[str, Any] | None = None
 
     for step in range(1, step_limit + 1):
         if len(results) >= budget_skill_calls:
@@ -370,6 +372,22 @@ def run_llm_orchestrated_loop(
             results[decision.skill_id] = result
             entry["status"] = "skill_completed"
             entry["skill_result"] = result.to_dict()
+            step_scorecard_dir = orchestrator_dir / "scorecards" / f"step_{step:03d}_{decision.skill_id}"
+            step_scoreboard = _iteration_scoreboard(results)
+            scorecard_paths = write_scorecard_artifacts(
+                ctx.dataset,
+                ctx.config,
+                step_scorecard_dir,
+                results,
+                step_scoreboard,
+                config_path=ctx.config_path,
+                run_id=f"step_{step:03d}_{decision.skill_id}",
+                previous_scorecard=previous_scorecard,
+            )
+            entry["scorecard"] = scorecard_paths
+            previous_scorecard_path = Path(scorecard_paths["scorecard"])
+            if previous_scorecard_path.exists():
+                previous_scorecard = json.loads(previous_scorecard_path.read_text())
         elif decision.action == "request_human_review":
             entry["status"] = "human_review_requested"
             stop_reason = "human_review_requested"
@@ -651,6 +669,24 @@ def _skill_card(manifest: SkillManifest, result: SkillResult | None) -> dict[str
 
 def _write_step_files(steps_dir: Path, step: int, entry: dict[str, Any]) -> None:
     (steps_dir / f"step_{step:03d}_decision.json").write_text(json.dumps(entry, indent=2, sort_keys=True) + "\n")
+
+
+def _iteration_scoreboard(results: dict[str, SkillResult]) -> dict[str, Any]:
+    blocking = [
+        {"skill_id": skill_id, "failures": result.blocking_failures}
+        for skill_id, result in results.items()
+        if result.status == "fail"
+    ]
+    return {
+        "status": "fail" if blocking else "pass",
+        "offline_validation_status": "fail" if blocking else "pass",
+        "human_review_readiness": "not_ready",
+        "release_candidate_ready": False,
+        "hardware_approval_status": results.get("real_robot_gate").status if "real_robot_gate" in results else "not_requested",
+        "safe_to_autorun_robot": False,
+        "blocking_failures": blocking,
+        "skills": {skill_id: result.to_dict() for skill_id, result in results.items()},
+    }
 
 
 def load_provider_command_json(value: str | None) -> list[str] | None:

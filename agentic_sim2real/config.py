@@ -51,6 +51,23 @@ DEFAULTS: dict[str, Any] = {
         "min_real_episodes_for_gate": 3,
         "max_recommended_delay_steps": 8,
         "precision_task": True,
+        "target_real_success": 0.8,
+        "gap_target": 0.1,
+    },
+    "task_spec": {
+        "task": "",
+        "goal": {},
+        "scenarios": [],
+        "policy_ckpt": "",
+        "sim_config": {"engine": "isaac", "hash": ""},
+        "real_data": {"source": "", "rollouts": None},
+        "skills_allowed": [],
+        "budget": {"gpu_hr": 20.0, "wall_hr": 6.0},
+        "kill_criteria": {"max_iters": 5, "min_delta": 0.01},
+        "owner": "",
+        "submitted": "",
+        "baseline_gap": None,
+        "baseline_real_success": None,
     },
     "policy": {
         "artifact_dir": "golden/sample_inputs/policy_artifacts",
@@ -130,6 +147,7 @@ class PipelineConfig:
     perception: dict[str, Any] = field(default_factory=dict)
     isaac_ros: dict[str, Any] = field(default_factory=dict)
     agent: dict[str, Any] = field(default_factory=dict)
+    task_spec: dict[str, Any] = field(default_factory=dict)
     policy: dict[str, Any] = field(default_factory=dict)
     release: dict[str, Any] = field(default_factory=dict)
     llm_orchestrator: dict[str, Any] = field(default_factory=dict)
@@ -143,6 +161,7 @@ class PipelineConfig:
             "perception": self.perception,
             "isaac_ros": self.isaac_ros,
             "agent": self.agent,
+            "task_spec": self.task_spec,
             "policy": self.policy,
             "release": self.release,
             "llm_orchestrator": self.llm_orchestrator,
@@ -160,6 +179,7 @@ def load_config(path: str | Path) -> PipelineConfig:
         perception=dict(merged["perception"]),
         isaac_ros=dict(merged["isaac_ros"]),
         agent=dict(merged["agent"]),
+        task_spec=dict(merged["task_spec"]),
         policy=dict(merged["policy"]),
         release=dict(merged["release"]),
         llm_orchestrator=dict(merged["llm_orchestrator"]),

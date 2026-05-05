@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .artifacts import write_slide_contract_bundle
 from .autoresearch import build_plan
 from .config import PipelineConfig, choose_task, load_config, nominal_action_scale
 from .data_quality import evaluate_real_data_quality
@@ -304,6 +305,17 @@ def write_harness_artifacts(
     (ctx.out_dir / "release_candidate.json").write_text(
         json.dumps(_release_candidate(results, scoreboard), indent=2, sort_keys=True) + "\n"
     )
+    artifact_paths = write_slide_contract_bundle(
+        ctx.dataset,
+        ctx.config,
+        ctx.out_dir,
+        results,
+        scoreboard,
+        config_path=ctx.config_path,
+        skill_ids=sorted(manifests),
+    )
+    scoreboard["artifacts"] = artifact_paths
+    (ctx.out_dir / "scoreboard.json").write_text(json.dumps(scoreboard, indent=2, sort_keys=True) + "\n")
     return scoreboard
 
 
