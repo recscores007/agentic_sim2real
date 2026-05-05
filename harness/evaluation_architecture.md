@@ -115,15 +115,16 @@ Thresholds live in `threshold_policy.json` and are divided into:
 Agents may propose parameter changes, but the threshold policy decides whether
 the candidate is releasable.
 
-## IsaacLab-Newton Status
+## Fitted SysID Status
 
-The default SysID path is the local log-based estimator in
-`agentic_sim2real/sysid.py`.
+PACE is the preferred fitted SysID backend. The offline fallback is the local
+log-based estimator in `agentic_sim2real/sysid.py`.
 
-IsaacLab-Newton is represented by the portable `newton_sysid` skill. Configure
-`config.sysid.newton_command` to run a Newton fitting entrypoint. The skill
-receives canonical aligned records, writes fitted parameters and residual
-metrics, and feeds the same evaluator and release gate. It is optional unless
-`release.profile="release_candidate"` or `config.sysid.require_newton=true`.
-When Newton/PACE evidence is absent, the harness records `evidence_missing`
-rather than a clean pass.
+PACE and IsaacLab-Newton are represented by portable backend skills. Configure
+`config.sysid.pace_command` or `config.sysid.newton_command` to run a fitting
+entrypoint. The skills receive canonical aligned records, write fitted
+parameters and residual metrics, and feed the same evaluator and release gate.
+They are optional unless `release.profile="release_candidate"`,
+`config.sysid.require_pace=true`, or `config.sysid.require_newton=true`. When
+PACE/Newton evidence is absent, the harness records `evidence_missing` rather
+than a clean pass.

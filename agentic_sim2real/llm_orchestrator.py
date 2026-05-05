@@ -14,6 +14,11 @@ from .skill_harness import (
     HarnessContext,
     SkillManifest,
     SkillResult,
+    _emit_run_event,
+    _initial_run_progress,
+    _mark_progress_step,
+    _utc_now,
+    _write_run_progress,
     ordered_skill_ids,
     prepare_harness,
     run_skill_step,
@@ -298,6 +303,9 @@ def run_llm_orchestrated_loop(
     budget_skill_calls = int(llm_cfg.get("budget_skill_calls", step_limit))
     allow_retries = bool(llm_cfg.get("allow_retries", False))
     ordered = ordered_skill_ids(manifests)
+    progress = _initial_run_progress(ctx, manifests, ordered)
+    _write_run_progress(ctx, progress)
+    (ctx.out_dir / "run_progress.jsonl").write_text("")
 
     results: dict[str, SkillResult] = {}
     journal: list[dict[str, Any]] = []
@@ -346,8 +354,12 @@ def run_llm_orchestrated_loop(
 
         invalid_decisions = 0
         if decision.action == "run_skill" and decision.skill_id:
+            _mark_progress_step(ctx, progress, decision.skill_id, "running")
+            _emit_run_event(ctx, progress, None, "skill_started", decision.skill_id)
             result = run_skill_step(manifests, ctx, decision.skill_id, results)
             results[decision.skill_id] = result
+            _mark_progress_step(ctx, progress, decision.skill_id, result.status, result)
+            _emit_run_event(ctx, progress, None, "skill_completed", decision.skill_id, result)
             entry["status"] = "skill_completed"
             entry["skill_result"] = result.to_dict()
             step_scorecard_dir = orchestrator_dir / "scorecards" / f"step_{step:03d}_{decision.skill_id}"
@@ -384,6 +396,12 @@ def run_llm_orchestrated_loop(
 
     journal_path = orchestrator_dir / "journal.jsonl"
     journal_path.write_text("\n".join(json.dumps(item, sort_keys=True) for item in journal) + ("\n" if journal else ""))
+    progress["status"] = stop_reason if len(results) < len(ordered) else "complete"
+    if any(result.status == "fail" for result in results.values()):
+        progress["status"] = "complete_with_failures"
+    progress["finished_at"] = _utc_now()
+    progress["updated_at"] = progress["finished_at"]
+    _write_run_progress(ctx, progress)
     scoreboard = write_harness_artifacts(
         ctx,
         manifests,

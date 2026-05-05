@@ -94,6 +94,7 @@ def write_pipeline_ui(
     pipeline_output = _read_json(run / "pipeline_output.json")
     run_record = _read_json(run / "run_record.json")
     scoreboard = _read_json(run / "scoreboard.json")
+    run_progress = _read_json(run / "run_progress.json") or _read_json(run / "harness" / "run_progress.json")
     trace = _read_json(run / "evaluation_trace.json")
     journal = _read_journal(run, journal_path)
 
@@ -118,6 +119,7 @@ def write_pipeline_ui(
             "sim2real_gap": "Backward-compatible alias for release_gap_score.",
         },
         "workflow": _workflow(mode, scoreboard, scorecard),
+        "run_progress": run_progress,
         "pipeline_input": pipeline_input,
         "rollout_summary": _rollout_summary(rollout_data),
         "scorecard": scorecard,
@@ -270,6 +272,7 @@ def _scoreboard_summary(scoreboard: dict[str, Any]) -> dict[str, Any]:
 
 
 def _skill_row(skill_id: str, result: dict[str, Any]) -> dict[str, Any]:
+    metrics = result.get("metrics", {}) if isinstance(result.get("metrics"), dict) else {}
     row = {
         "skill_id": skill_id,
         "status": result.get("status"),
@@ -279,6 +282,8 @@ def _skill_row(skill_id: str, result: dict[str, Any]) -> dict[str, Any]:
         "human_required": result.get("human_required"),
         "warnings": result.get("warnings", []),
         "blocking_failures": result.get("blocking_failures", []),
+        "run_reason": metrics.get("run_reason"),
+        "skip_reason": metrics.get("skip_reason"),
     }
     row.update(_skill_action_guidance(skill_id, result))
     return row
@@ -315,16 +320,16 @@ def _skill_action_guidance(skill_id: str, result: dict[str, Any]) -> dict[str, s
             guidance.update(
                 {
                     "action_level": "configure_backend",
-                    "pipeline_action": "Use local SysID fallback in smoke runs; require Newton only when the release profile demands physics SysID.",
-                    "user_action": "Set sysid.newton_enabled plus sysid.newton_root or sysid.newton_command to get fitted Newton parameters.",
+                    "pipeline_action": "Use PACE as the preferred fitted backend; configure Newton as a fallback or when explicitly required.",
+                    "user_action": "Set sysid.newton_enabled plus sysid.newton_root or sysid.newton_command when this run needs fitted Newton parameters.",
                 }
             )
         elif skill_id == "pace_sysid":
             guidance.update(
                 {
                     "action_level": "configure_backend",
-                    "pipeline_action": "Keep PACE as backup only; continue with Newton or local SysID when allowed.",
-                    "user_action": "Set sysid.pace_enabled plus sysid.pace_root or sysid.pace_command if Newton is unavailable.",
+                    "pipeline_action": "Use local SysID fallback in smoke runs; use PACE as the default fitted-physics backend when configured.",
+                    "user_action": "Set sysid.pace_enabled plus sysid.pace_root or sysid.pace_command to get fitted PACE parameters.",
                 }
             )
         else:
@@ -545,7 +550,7 @@ def _quality_rationale(
     if skill_id == "real_data_evidence_gate":
         return _real_data_quality_rationale(metrics, warnings)
     if skill_id == "physics_sysid":
-        return "Quality is driven by local log-based SysID plus video contact/friction evidence when uploaded; optional Newton/PACE backend skips are recorded as developer subchecks."
+        return "Quality is driven by local log-based SysID plus video contact/friction evidence when uploaded; PACE is the preferred fitted backend, with Newton as fallback when configured."
     if skill_id == "agentic_tuning_plan":
         suggested = metrics.get("suggested")
         experiments = metrics.get("experiment_count")
@@ -574,7 +579,7 @@ def _quality_rationale(
     if skill_id == "real_data_quality_gate":
         return _real_data_quality_rationale(metrics, warnings)
     if skill_id == "sysid_step_response":
-        return "Quality is 0.75 because the local log-based SysID gate passed, but it is a lightweight estimator rather than fitted Newton/PACE parameters."
+        return "Quality is 0.75 because the local log-based SysID gate passed, but it is a lightweight estimator rather than fitted PACE/Newton parameters."
     if skill_id == "video_contact_friction":
         count = metrics.get("friction_video_count")
         static_mu = metrics.get("object_static_friction")
@@ -977,6 +982,16 @@ const readinessHtml = `
 </section>`;
 
 const flowSteps = state.workflow || [];
+const progress = state.run_progress || {{}};
+const progressSteps = progress.steps || [];
+const currentProgressStep = progressSteps.find(s => s.status === "running") || progressSteps.find(s => s.status === "fail") || progressSteps[progressSteps.length - 1] || {{}};
+const progressRows = progressSteps.map(s => `<tr>
+  <td>${{fmt(s.index)}}/${{fmt(progress.total_steps || progressSteps.length)}}</td>
+  <td><code>${{fmt(s.skill_id)}}</code><div class="note">${{fmt(s.name)}}</div></td>
+  <td>${{pill(s.status || "pending")}}</td>
+  <td>${{fmt(s.run_reason)}}</td>
+  <td>${{fmt(s.summary)}}</td>
+</tr>`).join("");
 const workflowNode = (s, index) => `
   <article class="flow-node">
     <div class="flow-status-row">
@@ -1006,6 +1021,18 @@ const workflowHtml = `
     <div class="flow-note"><b>Evidence lane</b><span class="note">The harness writes camera tuning, friction matching, metrics, scorecards, traces, and release blockers for every run.</span></div>
     <div class="flow-note"><b>Safety lane</b><span class="note">Human review is the only path to supervised physical robot execution.</span></div>
   </div>
+</section>`;
+
+const progressHtml = `
+<section class="panel wide">
+  <h2>Run Progress</h2>
+  <div class="subgrid">
+    <div class="kv"><label>Status</label><strong>${{fmt(progress.status || board.status || "pending")}}</strong></div>
+    <div class="kv"><label>Current step</label><strong>${{fmt(currentProgressStep.skill_id || "complete")}}</strong><div class="note">${{fmt(currentProgressStep.summary)}}</div></div>
+    <div class="kv"><label>Completed</label><strong>${{fmt(progress.completed_steps ?? (board.skills || []).length)}} / ${{fmt(progress.total_steps ?? (board.skills || []).length)}}</strong></div>
+    <div class="kv"><label>Progress artifact</label><strong><code>run_progress.json</code></strong><div class="note">Use this file for live agent status.</div></div>
+  </div>
+  <div class="table-wrap"><table><thead><tr><th>#</th><th>Skill</th><th>Status</th><th>Why it ran</th><th>Result</th></tr></thead><tbody>${{progressRows || "<tr><td colspan='5' class='note'>No run progress artifact found for this run.</td></tr>"}}</tbody></table></div>
 </section>`;
 
 const charHtml = `
@@ -1088,7 +1115,7 @@ const deterministicSkills = (board.deterministic_validation_skills || []).map(ro
   <td>${{pill(row.action_level)}}<div class="note">${{row.release_blocking ? "release-blocking" : "non-blocking"}}; ${{row.human_required ? "human review" : "pipeline-owned"}}</div></td>
   <td>${{num(row.quality_score)}}<div class="note">${{fmt(row.quality_meaning)}}</div></td>
   <td>${{num(row.confidence)}}<div class="note">${{fmt(row.confidence_meaning)}}</div></td>
-  <td><b>Q:</b> ${{fmt(row.quality_rationale)}}<br><b>C:</b> ${{fmt(row.confidence_rationale)}}</td>
+  <td><b>Q:</b> ${{fmt(row.quality_rationale)}}<br><b>C:</b> ${{fmt(row.confidence_rationale)}}<br><b>Run:</b> ${{fmt(row.run_reason || row.skip_reason || "")}}</td>
   <td>${{fmt(row.pipeline_action)}}</td>
   <td>${{fmt(row.user_action)}}</td>
 </tr>`).join("");
@@ -1099,7 +1126,7 @@ const developerSubchecks = (board.developer_subchecks || []).map(row => `<tr>
   <td>${{pill(row.action_level)}}<div class="note">${{row.release_blocking ? "release-blocking" : "supporting"}}</div></td>
   <td>${{num(row.quality_score)}}<div class="note">${{fmt(row.quality_meaning)}}</div></td>
   <td>${{num(row.confidence)}}<div class="note">${{fmt(row.confidence_meaning)}}</div></td>
-  <td>${{fmt(row.quality_rationale)}}</td>
+  <td>${{fmt(row.run_reason || row.skip_reason || row.quality_rationale)}}</td>
 </tr>`).join("");
 
 const nondetHtml = `
@@ -1147,6 +1174,7 @@ const technicalAuditHtml = isDeveloper ? developerAuditHtml : customerAuditPoint
 
 document.getElementById("app").innerHTML = [
   workflowHtml,
+  progressHtml,
   audienceOverviewHtml,
   metricHtml,
   actionHtml,

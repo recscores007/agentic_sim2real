@@ -6,7 +6,7 @@
   "implementation": "agentic_tuning_plan",
   "depends_on": ["physics_sysid"],
   "inputs": ["gap_estimates", "video_contact_friction", "video_camera_tuning", "config.robot", "config.perception"],
-  "outputs": ["agentic_tuning_plan.json", "subchecks/*/result.json", "result.json"],
+  "outputs": ["agentic_tuning_plan.json", "sim_params_patch.yaml", "sim_params_patch.json", "subchecks/*/result.json", "result.json"],
   "validators": [
     "domain-randomization recommendations must stay within configured safety bounds",
     "video-derived object and gripper friction recommendations must stay inside conservative sim bounds",

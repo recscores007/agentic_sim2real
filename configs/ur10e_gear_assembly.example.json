@@ -120,7 +120,7 @@
     "audience": "customer"
   },
   "sysid": {
-    "sysid_backend_preference": ["newton", "pace", "local"],
+    "sysid_backend_preference": ["pace", "newton", "local"],
     "newton_enabled": false,
     "require_newton": false,
     "newton_root": "",

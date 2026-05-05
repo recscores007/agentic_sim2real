@@ -176,10 +176,10 @@ def _check_sysid_backends(config: PipelineConfig, checks: list[dict[str, Any]]) 
 
     if pace_command:
         status = "warn" if pace_command_is_stub else "pass"
-        message = "custom PACE backup SysID command appears to be a stub" if pace_command_is_stub else "custom PACE backup SysID command is configured"
+        message = "custom PACE SysID command appears to be a stub" if pace_command_is_stub else "custom PACE SysID command is configured"
         _add(checks, "sysid", "pace", status, message)
     elif pace_default_runnable:
-        _add(checks, "sysid", "pace", "pass", "PACE backup SysID entrypoint found", path=str(pace_fit))
+        _add(checks, "sysid", "pace", "pass", "PACE SysID entrypoint found", path=str(pace_fit))
     elif pace_entrypoint_available and pace_enabled:
         _add(checks, "sysid", "pace", "fail", "PACE is enabled but pace_task and pace_data_dir are required for the default PACE fit.py path")
     elif pace_entrypoint_available:
@@ -187,11 +187,11 @@ def _check_sysid_backends(config: PipelineConfig, checks: list[dict[str, Any]]) 
     elif pace_enabled:
         _add(checks, "sysid", "pace", "fail", "PACE SysID is enabled but pace-sim2real is missing or incomplete")
     else:
-        _add(checks, "sysid", "pace", "warn", "PACE backup SysID is not configured; set sysid.pace_enabled and sysid.pace_root to use it if Newton is unavailable")
+        _add(checks, "sysid", "pace", "warn", "PACE SysID is not configured; set sysid.pace_enabled and sysid.pace_root to use fitted physics parameters")
 
     _add(checks, "sysid", "local", "pass", "local log-based SysID fallback is available")
     return {
-        "preference": list(sysid.get("sysid_backend_preference", ["newton", "pace", "local"])),
+        "preference": list(sysid.get("sysid_backend_preference", ["pace", "newton", "local"])),
         "newton": {
             "enabled": newton_enabled,
             "root": str(newton_root) if newton_root else "",
@@ -253,7 +253,7 @@ def _check_required_physics(
         return result
 
     if physics_required and not (newton["available"] or pace["available"]):
-        _add(checks, "required_physics", "backend", "fail", "profile requires Newton or PACE SysID, but neither backend is available")
+        _add(checks, "required_physics", "backend", "fail", "profile requires PACE or Newton SysID, but neither backend is available")
     elif physics_required:
         _add(checks, "required_physics", "backend", "pass", "profile requires physics SysID and at least one backend is available")
 
@@ -292,20 +292,20 @@ def _command_looks_like_stub(command: list[str]) -> bool:
 
 
 def _recommendations(sysid_checks: dict[str, Any]) -> list[str]:
-    if sysid_checks["newton"]["available"]:
-        return ["Use Newton SysID as the primary physics fitting backend."]
     if sysid_checks["pace"]["available"]:
         if sysid_checks["pace"]["command_configured"]:
-            return ["Newton is unavailable; use the configured custom PACE backup SysID command."]
-        return ["Newton is unavailable; PACE backup SysID can be used if the configured PACE task matches this embodiment."]
+            return ["Use the configured custom PACE SysID command as the primary physics fitting backend."]
+        return ["Use PACE SysID as the primary physics fitting backend when the configured PACE task matches this embodiment."]
+    if sysid_checks["newton"]["available"]:
+        return ["PACE is unavailable; use Newton SysID as the fallback physics fitting backend."]
     if sysid_checks["pace"]["entrypoint_available"]:
         return [
             "PACE repo was found, but the default PACE path still needs sysid.pace_task and sysid.pace_data_dir.",
             "For custom embodiments, provide sysid.pace_command instead of overfitting the generic pipeline to one PACE task.",
         ]
     return [
-        "Newton and PACE are unavailable; the pipeline will use local log-based SysID only.",
-        "To add PACE backup: clone https://github.com/leggedrobotics/pace-sim2real and set sysid.pace_root.",
+        "PACE and Newton are unavailable; the pipeline will use local log-based SysID only.",
+        "To add primary PACE SysID: clone https://github.com/leggedrobotics/pace-sim2real and set sysid.pace_root.",
     ]
 
 

@@ -10,9 +10,9 @@
   "validators": [
     "local log-based SysID must emit delay, deadband, and contact summaries",
     "uploaded contact, object, and gripper videos should emit friction and slip evidence when configured",
-    "Newton and PACE backend adapters must consume canonical aligned records when enabled",
+    "PACE and Newton backend adapters must consume canonical aligned records when enabled",
     "missing optional backend evidence must be recorded without blocking smoke runs",
-    "required Newton or PACE evidence must fail when configured as mandatory"
+    "required PACE or Newton evidence must fail when configured as mandatory"
   ],
   "quality_gate": {"min_score": 0.6},
   "human_required": true,

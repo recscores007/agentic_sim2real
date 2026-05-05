@@ -60,7 +60,7 @@ Customer and developer flows use the same validation pipeline. The difference is
 - Scripted or command-backed LLM orchestration that can propose skill order and tuning plans but cannot approve release.
 - Real-data readiness checks for trajectory, timing, uploaded video, perception, contact, and policy artifact evidence.
 - Uploaded-video evidence hooks for camera-parameter tuning and object/gripper friction matching.
-- Physics SysID support with local fallback, video contact/friction evidence, and optional Newton or PACE integrations.
+- Physics SysID support with PACE as the preferred fitted backend, Newton fallback support, local fallback, and video contact/friction evidence.
 - Release gates that keep real robot motion behind explicit human approval.
 - Custom skill overlays for replacing or extending validation behavior without rewriting the harness.
 
@@ -94,9 +94,9 @@ docs/assets/developer-harness.gif
 | Data contracts | JSON, JSONL, skill manifests |
 | UI output | Static HTML, CSS, and JavaScript |
 | Tests | `unittest`, GitHub Actions |
-| Optional robotics integrations | Isaac Lab, Isaac ROS, Newton, PACE |
+| Optional robotics integrations | Isaac Lab, Isaac ROS, PACE, Newton |
 
-The offline harness uses only the Python standard library. Isaac Lab, Isaac ROS, Newton, and PACE are optional external runtimes configured by the user.
+The offline harness uses only the Python standard library. Isaac Lab, Isaac ROS, PACE, and Newton are optional external runtimes configured by the user.
 
 ## Installation
 
@@ -138,6 +138,13 @@ Review the generated hub:
 
 ```text
 outputs/quickstart/ui/index.html
+```
+
+Watch live run position while an agent or CI job is executing:
+
+```text
+outputs/quickstart/run_progress.json
+outputs/quickstart/run_progress.jsonl
 ```
 
 ## Usage Examples
@@ -198,6 +205,12 @@ agentic-sim2real --config configs/ur10e_gear_assembly.example.json run-harness \
   --out outputs/ur10e_video_tuning_harness
 ```
 
+Review the concrete simulator patch proposal:
+
+```text
+outputs/ur10e_video_tuning_harness/skills/agentic_tuning_plan/sim_params_patch.yaml
+```
+
 Expected video evidence layout:
 
 ```text
@@ -224,7 +237,7 @@ agentic-sim2real --config configs/ur10e_gear_assembly.example.json check-real-ga
 | --- | --- |
 | `project_preflight` | Validate local environment, ROS/Isaac assumptions, task configuration, and policy artifacts. |
 | `real_data_evidence_gate` | Check real log quality, alignment, uploaded camera video, pose repeatability, and evidence completeness. |
-| `physics_sysid` | Estimate physics gaps from trajectories, contact logs, uploaded friction videos, and optional Newton/PACE backends. |
+| `physics_sysid` | Estimate physics gaps from trajectories, contact logs, uploaded friction videos, and optional PACE/Newton backends. |
 | `agentic_tuning_plan` | Propose bounded camera, friction, domain-randomization, action-scale, and experiment updates from observed evidence. |
 | `regression_evaluation` | Check simulation rollout and regression evidence before release. |
 | `release_candidate_gate` | Decide whether the candidate can move to human review. |
@@ -250,7 +263,7 @@ Important fields:
 | `video_evidence.analysis_command` | Optional command that watches uploaded videos and writes camera/friction metrics. |
 | `video_evidence.reprojection_error_gate_px` | Gate for camera-calibration video analysis. |
 | `video_evidence.min_friction_confidence` | Minimum confidence for video-derived object/gripper friction tuning. |
-| `sysid.*` | Newton, PACE, and local SysID settings. |
+| `sysid.*` | PACE, Newton, and local SysID settings. Default preference is `["pace", "newton", "local"]`. |
 | `safety.real_robot_gate_env` | Environment variable required for hardware-facing checks. |
 
 Use `configs/*.local.json` for private machine-specific settings. Local config files are ignored by Git.

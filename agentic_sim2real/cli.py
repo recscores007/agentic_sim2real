@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from typing import Any
 
 from .autoresearch import build_plan
 from .config import PipelineConfig, choose_task, command_env, load_config
@@ -67,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     harness.add_argument("--skill-dir", action="append", default=[], help="Overlay directory with replacement skills")
     harness.add_argument("--include-real", action="store_true", help="Include real-robot skills after human approval")
     harness.add_argument("--audience", choices=["customer", "developer"], default=None, help="Hub UI audience")
+    harness.add_argument("--no-progress", action="store_true", help="Do not print live skill progress to stderr")
 
     eval_loop = sub.add_parser("run-evaluation-loop", help="Run LLM/Agent/Evaluator/Critic/Release/Human trace")
     eval_loop.add_argument("--root", default=".")
@@ -117,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "prepare-real-data":
         return cmd_prepare_real_data(args.session, args.out, args.tolerance_s, args.root, args.embodiment)
     if args.cmd == "run-harness":
-        return cmd_run_harness(args.root, args.config, args.dataset, args.out, args.include_real, args.skill, args.skill_dir, args.audience)
+        return cmd_run_harness(args.root, args.config, args.dataset, args.out, args.include_real, args.skill, args.skill_dir, args.audience, not args.no_progress)
     if args.cmd == "run-evaluation-loop":
         return cmd_run_evaluation_loop(
             args.root,
@@ -255,6 +257,7 @@ def cmd_run_harness(
     only_skill: str | None,
     skill_dirs: list[str],
     audience: str | None,
+    show_progress: bool = True,
 ) -> int:
     scoreboard = run_harness(
         root=root,
@@ -265,9 +268,23 @@ def cmd_run_harness(
         only_skill=only_skill,
         skill_dirs=skill_dirs,
         audience=audience,
+        progress_callback=_print_progress_event if show_progress else None,
     )
     print(json.dumps(scoreboard, indent=2, sort_keys=True))
     return 0 if scoreboard["status"] == "pass" else 1
+
+
+def _print_progress_event(event: dict[str, Any]) -> None:
+    if event.get("event") == "skill_started":
+        print(
+            f"[{event.get('index')}/{event.get('total')}] starting {event.get('skill_id')}: {event.get('summary')}",
+            file=sys.stderr,
+        )
+    elif event.get("event") == "skill_completed":
+        print(
+            f"[{event.get('index')}/{event.get('total')}] {event.get('skill_id')} -> {event.get('status')}: {event.get('summary')}",
+            file=sys.stderr,
+        )
 
 
 def cmd_prepare_real_data(

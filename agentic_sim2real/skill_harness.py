@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import traceback
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -19,6 +21,7 @@ from .real_data import ensure_aligned_dataset
 from .release_policy import is_sample_policy_artifact_path, release_profile, release_requires, release_waiver
 from .run_ui import write_pipeline_ui
 from .safety import require_real_robot_gate
+from .sim_patch import build_sim_params_patch, write_sim_params_patch, write_sim_params_patch_json
 from .sysid import estimate_gap
 from .video_evidence import (
     apply_video_friction_to_domain_randomization,
@@ -31,6 +34,7 @@ from .video_evidence import (
 ALLOWED_SKILL_STATUSES = {"pass", "fail", "skip", "not_applicable", "not_approved", "evidence_missing"}
 BLOCKING_SKILL_STATUSES = {"fail", "evidence_missing"}
 NON_SCORING_STATUSES = {"skip", "not_applicable", "not_approved", "evidence_missing"}
+RUN_PROGRESS_SCHEMA = "agentic_sim2real.run_progress.v1"
 REQUIRED_MANIFEST_FIELDS = {
     "id",
     "name",
@@ -240,6 +244,7 @@ def run_harness(
     only_skill: str | None = None,
     skill_dirs: list[str | Path] | None = None,
     audience: str | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     ctx, manifests = prepare_harness(
         root=root,
@@ -260,8 +265,20 @@ def run_harness(
 
     results: dict[str, SkillResult] = {}
     ctx.skill_dir.mkdir(parents=True, exist_ok=True)
+    progress = _initial_run_progress(ctx, manifests, ordered, only_skill=only_skill)
+    _write_run_progress(ctx, progress)
+    (ctx.out_dir / "run_progress.jsonl").write_text("")
     for skill_id in ordered:
+        _mark_progress_step(ctx, progress, skill_id, "running")
+        _emit_run_event(ctx, progress, progress_callback, "skill_started", skill_id)
         results[skill_id] = run_skill_step(manifests, ctx, skill_id, results)
+        _mark_progress_step(ctx, progress, skill_id, results[skill_id].status, results[skill_id])
+        _emit_run_event(ctx, progress, progress_callback, "skill_completed", skill_id, results[skill_id])
+
+    progress["status"] = "complete_with_failures" if any(result.status == "fail" for result in results.values()) else "complete"
+    progress["finished_at"] = _utc_now()
+    progress["updated_at"] = progress["finished_at"]
+    _write_run_progress(ctx, progress)
 
     return write_harness_artifacts(ctx, manifests, results)
 
@@ -333,7 +350,10 @@ def run_skill_step(
             metrics={"safe_to_autorun_robot": False},
         )
     else:
-        result = _run_one(manifest, ctx, skill_out, previous_results)
+        try:
+            result = _run_one(manifest, ctx, skill_out, previous_results)
+        except Exception as exc:
+            result = _exception_result(manifest, skill_out, exc)
         result.human_required = manifest.human_required
         result.release_blocking = manifest.release_blocking
         result = _apply_quality_gate(manifest, result)
@@ -348,7 +368,9 @@ def write_harness_artifacts(
     results: dict[str, SkillResult],
     require_all_release_blocking: bool = False,
 ) -> dict[str, Any]:
+    progress = _ensure_run_progress(ctx, manifests, results)
     scoreboard = _scoreboard(ctx.config, results, manifests, require_all_release_blocking=require_all_release_blocking)
+    scoreboard["run_progress"] = progress
     (ctx.out_dir / "scoreboard.json").write_text(json.dumps(scoreboard, indent=2, sort_keys=True) + "\n")
     (ctx.out_dir / "release_candidate.json").write_text(
         json.dumps(_release_candidate(results, scoreboard), indent=2, sort_keys=True) + "\n"
@@ -363,9 +385,237 @@ def write_harness_artifacts(
         skill_ids=sorted(manifests),
     )
     artifact_paths.update(write_pipeline_ui(ctx.out_dir, run_status="complete", audience=ctx.config.ui.get("audience")))
+    artifact_paths["run_progress"] = str(ctx.out_dir / "run_progress.json")
     scoreboard["artifacts"] = artifact_paths
     (ctx.out_dir / "scoreboard.json").write_text(json.dumps(scoreboard, indent=2, sort_keys=True) + "\n")
     return scoreboard
+
+
+def _exception_result(manifest: SkillManifest, skill_out: Path, exc: Exception) -> SkillResult:
+    evidence = _write_json(
+        skill_out / "unhandled_exception.json",
+        {
+            "status": "fail",
+            "skill_id": manifest.skill_id,
+            "exception_type": exc.__class__.__name__,
+            "message": str(exc),
+            "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+            "pipeline_action": "captured_as_skill_failure",
+        },
+    )
+    return SkillResult(
+        skill_id=manifest.skill_id,
+        status="fail",
+        quality_score=0.0,
+        confidence=1.0,
+        blocking_failures=[f"{manifest.skill_id} raised {exc.__class__.__name__}: {exc}"],
+        evidence_files=[evidence],
+        metrics={
+            "exception_type": exc.__class__.__name__,
+            "run_reason": _skill_run_reason(manifest),
+            "failure_mode": "unhandled_exception_captured",
+        },
+    )
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _initial_run_progress(
+    ctx: HarnessContext,
+    manifests: dict[str, SkillManifest],
+    ordered: list[str],
+    *,
+    only_skill: str | None = None,
+) -> dict[str, Any]:
+    started = _utc_now()
+    return {
+        "schema": RUN_PROGRESS_SCHEMA,
+        "status": "running",
+        "started_at": started,
+        "updated_at": started,
+        "finished_at": None,
+        "current_step_index": 0,
+        "current_skill_id": None,
+        "completed_steps": 0,
+        "failed_steps": 0,
+        "total_steps": len(ordered),
+        "mode": "single_skill" if only_skill else "full_harness",
+        "run": {
+            "config_path": str(ctx.config_path),
+            "dataset": str(ctx.dataset),
+            "out_dir": str(ctx.out_dir),
+            "include_real": ctx.include_real,
+            "audience": ctx.config.ui.get("audience"),
+        },
+        "steps": [
+            {
+                "index": index,
+                "skill_id": skill_id,
+                "name": manifests[skill_id].data.get("name", skill_id),
+                "owner_agent": manifests[skill_id].data.get("owner_agent", "pipeline"),
+                "status": "pending",
+                "dependencies": manifests[skill_id].depends_on,
+                "release_blocking": manifests[skill_id].release_blocking,
+                "human_required": manifests[skill_id].human_required,
+                "real_robot": manifests[skill_id].real_robot,
+                "run_reason": _skill_run_reason(manifests[skill_id], only_skill=only_skill),
+                "started_at": None,
+                "finished_at": None,
+                "summary": "Waiting for dependencies and earlier steps.",
+            }
+            for index, skill_id in enumerate(ordered, start=1)
+        ],
+        "latest_event": None,
+        "events": [],
+    }
+
+
+def _skill_run_reason(manifest: SkillManifest, *, only_skill: str | None = None) -> str:
+    if only_skill:
+        return f"Selected by --skill {only_skill}; dependencies are collapsed to the owning consolidated skill when needed."
+    if manifest.skill_id == "project_preflight":
+        return "Runs first to validate configuration, environment assumptions, task selection, ROS/Isaac setup, and policy artifacts."
+    if manifest.skill_id == "real_data_evidence_gate":
+        return "Runs after preflight to verify real logs, uploaded videos, pose repeatability, and data-readiness evidence."
+    if manifest.skill_id == "physics_sysid":
+        return "Runs because actuator, latency, contact, friction, and optional fitted-backend evidence drive simulator parameter proposals."
+    if manifest.skill_id == "agentic_tuning_plan":
+        return "Runs after evidence gates to write bounded sim-parameter and experiment proposals."
+    if manifest.skill_id == "regression_evaluation":
+        return "Runs after tuning proposals to check simulated regression and optional Isaac Lab rollout evidence."
+    if manifest.skill_id == "release_candidate_gate":
+        return "Runs after validation skills to decide whether the candidate can move to human review."
+    if manifest.skill_id == "real_robot_gate":
+        return "Runs last as an explicit human approval checkpoint; it never authorizes unattended robot motion."
+    deps = ", ".join(manifest.depends_on) or "no declared dependencies"
+    return f"Runs from the manifest order after {deps}."
+
+
+def _progress_step(progress: dict[str, Any], skill_id: str) -> dict[str, Any] | None:
+    for step in progress.get("steps", []):
+        if step.get("skill_id") == skill_id:
+            return step
+    return None
+
+
+def _mark_progress_step(
+    ctx: HarnessContext,
+    progress: dict[str, Any],
+    skill_id: str,
+    status: str,
+    result: SkillResult | None = None,
+) -> None:
+    now = _utc_now()
+    step = _progress_step(progress, skill_id)
+    if step is None:
+        return
+    step["status"] = status
+    progress["updated_at"] = now
+    progress["current_skill_id"] = skill_id
+    progress["current_step_index"] = step.get("index", 0)
+    if status == "running":
+        step["started_at"] = now
+        step["summary"] = "Running now."
+    else:
+        step["finished_at"] = now
+        if result:
+            step["quality_score"] = round(float(result.quality_score), 3)
+            step["confidence"] = round(float(result.confidence), 3)
+            step["warnings_count"] = len(result.warnings)
+            step["blocking_failure_count"] = len(result.blocking_failures)
+            step["summary"] = _result_summary(result)
+    finished = [item for item in progress.get("steps", []) if item.get("status") not in {"pending", "running"}]
+    progress["completed_steps"] = len(finished)
+    progress["failed_steps"] = sum(1 for item in finished if item.get("status") == "fail")
+    _write_run_progress(ctx, progress)
+
+
+def _result_summary(result: SkillResult) -> str:
+    if result.blocking_failures:
+        return str(result.blocking_failures[0])
+    if result.warnings:
+        return str(result.warnings[0])
+    if result.status == "pass":
+        return "Completed successfully."
+    if result.status == "not_applicable":
+        return str(result.metrics.get("skip_reason") or "Not applicable for this run.")
+    if result.status == "evidence_missing":
+        return str(result.metrics.get("skip_reason") or "Evidence was not configured or not found.")
+    return f"Completed with status {result.status}."
+
+
+def _emit_run_event(
+    ctx: HarnessContext,
+    progress: dict[str, Any],
+    progress_callback: Callable[[dict[str, Any]], None] | None,
+    event_name: str,
+    skill_id: str,
+    result: SkillResult | None = None,
+) -> None:
+    step = _progress_step(progress, skill_id) or {}
+    event = {
+        "timestamp": _utc_now(),
+        "event": event_name,
+        "index": step.get("index"),
+        "total": progress.get("total_steps"),
+        "skill_id": skill_id,
+        "status": result.status if result else "running",
+        "summary": _result_summary(result) if result else step.get("run_reason", ""),
+    }
+    progress["latest_event"] = event
+    events = list(progress.get("events", []))
+    events.append(event)
+    progress["events"] = events[-50:]
+    _write_run_progress(ctx, progress)
+    with (ctx.out_dir / "run_progress.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, sort_keys=True) + "\n")
+    if progress_callback:
+        progress_callback(event)
+
+
+def _write_run_progress(ctx: HarnessContext, progress: dict[str, Any]) -> None:
+    (ctx.out_dir / "run_progress.json").write_text(json.dumps(progress, indent=2, sort_keys=True) + "\n")
+
+
+def _ensure_run_progress(
+    ctx: HarnessContext,
+    manifests: dict[str, SkillManifest],
+    results: dict[str, SkillResult],
+) -> dict[str, Any]:
+    path = ctx.out_dir / "run_progress.json"
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text())
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            pass
+    ordered = ordered_skill_ids(manifests)
+    progress = _initial_run_progress(ctx, manifests, ordered)
+    for skill_id, result in results.items():
+        step = _progress_step(progress, skill_id)
+        if not step:
+            continue
+        step["status"] = result.status
+        step["finished_at"] = _utc_now()
+        step["quality_score"] = round(float(result.quality_score), 3)
+        step["confidence"] = round(float(result.confidence), 3)
+        step["warnings_count"] = len(result.warnings)
+        step["blocking_failure_count"] = len(result.blocking_failures)
+        step["summary"] = _result_summary(result)
+    pending_count = len(ordered) - len(results)
+    if pending_count:
+        progress["status"] = "stopped_before_all_steps"
+    else:
+        progress["status"] = "complete_with_failures" if any(result.status == "fail" for result in results.values()) else "complete"
+    progress["completed_steps"] = len(results)
+    progress["failed_steps"] = sum(1 for result in results.values() if result.status == "fail")
+    progress["finished_at"] = _utc_now()
+    progress["updated_at"] = progress["finished_at"]
+    _write_run_progress(ctx, progress)
+    return progress
 
 
 def _run_one(
@@ -915,6 +1165,7 @@ def _impl_sysid_step_response(
             "episodes": summary["episodes"],
             "delay_steps": gap["delay"]["delay_steps"],
             "deadband_command_norm": gap["deadband_stiction_proxy"]["deadband_command_norm"],
+            "run_reason": "The local log-based SysID estimator always runs as the offline baseline for actuator latency, deadband, and contact signals.",
         },
     )
 
@@ -942,7 +1193,10 @@ def _impl_video_contact_friction(
         blocking_failures=[str(item) for item in report["blocking_failures"]],
         warnings=[str(item) for item in report["warnings"]],
         evidence_files=[evidence],
-        metrics=dict(report["metrics"]),
+        metrics={
+            **dict(report["metrics"]),
+            "run_reason": "Contact/friction video evidence is checked during physics SysID so uploaded videos can tune object and gripper friction; missing videos are recorded explicitly.",
+        },
     )
 
 
@@ -954,6 +1208,31 @@ def _impl_newton_sysid(
 ) -> SkillResult:
     sysid_cfg = ctx.config.sysid
     required = bool(sysid_cfg.get("require_newton", False))
+    preference = [str(item).strip().lower() for item in sysid_cfg.get("sysid_backend_preference", ["pace", "newton", "local"])]
+    pace = previous.get("pace_sysid")
+    if not required and pace and pace.status == "pass" and _prefers_pace(preference):
+        evidence = _write_json(
+            skill_out / "newton_sysid.json",
+            {
+                "status": "not_applicable",
+                "reason": "PACE SysID passed and is preferred ahead of Newton.",
+                "fallback_skill": "pace_sysid",
+            },
+        )
+        return SkillResult(
+            skill_id=manifest.skill_id,
+            status="not_applicable",
+            quality_score=0.0,
+            confidence=1.0,
+            warnings=["Newton SysID skipped because PACE is the preferred fitted-physics backend"],
+            evidence_files=[evidence],
+            metrics={
+                "newton_enabled": False,
+                "fallback_skill": "pace_sysid",
+                "run_reason": "Newton is checked after PACE so the run records whether a fallback fitted backend was needed.",
+                "skip_reason": "PACE SysID passed and sysid_backend_preference puts PACE ahead of Newton.",
+            },
+        )
     command = [str(item) for item in sysid_cfg.get("newton_command", [])]
     newton_root = str(sysid_cfg.get("newton_root") or os.environ.get("ISAACLAB_NEWTON_ROOT", ""))
     enabled = bool(sysid_cfg.get("newton_enabled", False) or command or newton_root)
@@ -991,7 +1270,12 @@ def _impl_newton_sysid(
             blocking_failures=[message] if required else [],
             warnings=[] if required else ["Newton SysID skipped; set sysid.newton_enabled plus sysid.newton_root or sysid.newton_command to enable it"],
             evidence_files=[evidence],
-            metrics={"newton_enabled": False, "fallback_skill": "sysid_step_response"},
+            metrics={
+                "newton_enabled": False,
+                "fallback_skill": "sysid_step_response",
+                "run_reason": "Newton is checked as the configured fallback fitted SysID backend and to make missing backend evidence explicit.",
+                "skip_reason": "sysid.newton_enabled is false and neither sysid.newton_command nor sysid.newton_root is configured.",
+            },
         )
 
     if not command:
@@ -1001,7 +1285,7 @@ def _impl_newton_sysid(
             message = f"Built-in Newton bridge could not complete: {exc}"
             evidence = _write_json(log_path, {"error": str(exc), "input_file": str(input_path)})
             return _newton_unavailable_result(manifest.skill_id, required, message, evidence)
-        return _sysid_backend_result_from_payload(
+        result = _sysid_backend_result_from_payload(
             manifest.skill_id,
             payload,
             sysid_cfg,
@@ -1009,6 +1293,8 @@ def _impl_newton_sysid(
             skill_out,
             extra_evidence=[str(output_path)] if output_path.exists() else [],
         )
+        result.metrics.setdefault("run_reason", "Newton ran because sysid.newton_enabled, sysid.newton_command, or sysid.newton_root is configured.")
+        return result
 
     formatted_command = [
         item.format(input=input_path, output=output_path, dataset=ctx.dataset, root=ctx.root, newton_root=newton_root)
@@ -1058,7 +1344,7 @@ def _impl_newton_sysid(
         message = f"Newton SysID result could not be parsed: {exc}"
         return _newton_unavailable_result(manifest.skill_id, required, message, log_evidence)
 
-    return _sysid_backend_result_from_payload(
+    result = _sysid_backend_result_from_payload(
         manifest.skill_id,
         payload,
         sysid_cfg,
@@ -1066,6 +1352,8 @@ def _impl_newton_sysid(
         skill_out,
         extra_evidence=[log_evidence],
     )
+    result.metrics.setdefault("run_reason", "Newton ran because sysid.newton_command is configured.")
+    return result
 
 
 def _newton_unavailable_result(skill_id: str, required: bool, message: str, evidence: str) -> SkillResult:
@@ -1087,7 +1375,12 @@ def _sysid_unavailable_result(
         blocking_failures=[message] if required else [],
         warnings=[] if required else [message],
         evidence_files=[evidence],
-        metrics={backend_key: False, "fallback_skill": "sysid_step_response"},
+        metrics={
+            backend_key: False,
+            "fallback_skill": "sysid_step_response",
+            "run_reason": "A configured fitted SysID backend was attempted and recorded as unavailable instead of stopping the whole pipeline.",
+            "skip_reason": message,
+        },
     )
 
 
@@ -1149,9 +1442,9 @@ def _impl_pace_sysid(
 ) -> SkillResult:
     sysid_cfg = ctx.config.sysid
     required = bool(sysid_cfg.get("require_pace", False))
-    preference = [str(item) for item in sysid_cfg.get("sysid_backend_preference", ["newton", "pace", "local"])]
+    preference = [str(item).strip().lower() for item in sysid_cfg.get("sysid_backend_preference", ["pace", "newton", "local"])]
     newton = previous.get("newton_sysid")
-    if newton and newton.status == "pass" and _prefers_newton(preference):
+    if not required and newton and newton.status == "pass" and _prefers_newton(preference):
         evidence = _write_json(
             skill_out / "pace_sysid.json",
             {
@@ -1165,9 +1458,14 @@ def _impl_pace_sysid(
             status="not_applicable",
             quality_score=0.0,
             confidence=1.0,
-            warnings=["PACE backup skipped because Newton SysID passed"],
+            warnings=["PACE SysID skipped because Newton is preferred ahead of PACE for this config"],
             evidence_files=[evidence],
-            metrics={"pace_enabled": False, "fallback_skill": "newton_sysid"},
+            metrics={
+                "pace_enabled": False,
+                "fallback_skill": "newton_sysid",
+                "run_reason": "PACE is checked so the run records whether the preferred fitted backend was needed.",
+                "skip_reason": "Newton SysID passed and sysid_backend_preference puts Newton ahead of PACE.",
+            },
         )
 
     command = [str(item) for item in sysid_cfg.get("pace_command", [])]
@@ -1187,7 +1485,7 @@ def _impl_pace_sysid(
 
     if not enabled:
         status = "fail" if required else "evidence_missing"
-        reason = "PACE backup SysID is required but is not enabled or configured." if required else "PACE backup SysID is not enabled; local log-based SysID remains the fallback when Newton is unavailable."
+        reason = "PACE SysID is required but is not enabled or configured." if required else "PACE SysID is not enabled; local log-based SysID remains the offline fallback."
         evidence = _write_json(
             skill_out / "pace_sysid.json",
             {"status": status, "reason": reason, "fallback_skill": "sysid_step_response", "input_file": str(input_path)},
@@ -1198,18 +1496,23 @@ def _impl_pace_sysid(
             quality_score=0.0,
             confidence=1.0,
             blocking_failures=[reason] if required else [],
-            warnings=[] if required else ["PACE backup skipped; set sysid.pace_enabled plus sysid.pace_root or sysid.pace_command to enable it"],
+            warnings=[] if required else ["PACE SysID skipped; set sysid.pace_enabled plus sysid.pace_root or sysid.pace_command to enable fitted physics parameters"],
             evidence_files=[evidence],
-            metrics={"pace_enabled": False, "fallback_skill": "sysid_step_response"},
+            metrics={
+                "pace_enabled": False,
+                "fallback_skill": "sysid_step_response",
+                "run_reason": "PACE is checked first because it is the default fitted SysID backend.",
+                "skip_reason": "sysid.pace_enabled is false and neither sysid.pace_command nor sysid.pace_root is configured.",
+            },
         )
 
     try:
         payload = run_pace_bridge(input_payload, work_dir=skill_out, output_path=output_path)
     except Exception as exc:
-        message = f"PACE backup bridge could not complete: {exc}"
+        message = f"PACE SysID bridge could not complete: {exc}"
         evidence = _write_json(skill_out / "pace_command_log.json", {"error": str(exc), "input_file": str(input_path)})
         return _sysid_unavailable_result(manifest.skill_id, required, message, evidence, backend_key="pace_available")
-    return _sysid_backend_result_from_payload(
+    result = _sysid_backend_result_from_payload(
         manifest.skill_id,
         payload,
         sysid_cfg,
@@ -1219,6 +1522,8 @@ def _impl_pace_sysid(
         min_confidence_key="min_pace_confidence",
         backend_label="PACE SysID",
     )
+    result.metrics.setdefault("run_reason", "PACE ran because it is enabled or configured as the preferred fitted SysID backend.")
+    return result
 
 
 def _prefers_newton(preference: list[str]) -> bool:
@@ -1227,6 +1532,32 @@ def _prefers_newton(preference: list[str]) -> bool:
     if "pace" not in preference:
         return True
     return preference.index("newton") < preference.index("pace")
+
+
+def _prefers_pace(preference: list[str]) -> bool:
+    if "pace" not in preference:
+        return False
+    if "newton" not in preference:
+        return True
+    return preference.index("pace") < preference.index("newton")
+
+
+def _ordered_sysid_backend_subchecks(preference: list[str]) -> list[tuple[str, str, bool, bool]]:
+    backend_specs = {
+        "pace": ("pace_sysid", "pace_sysid", False, False),
+        "newton": ("newton_sysid", "newton_sysid", False, False),
+    }
+    ordered: list[tuple[str, str, bool, bool]] = []
+    seen: set[str] = set()
+    for item in preference:
+        backend = str(item).strip().lower()
+        if backend in backend_specs and backend not in seen:
+            ordered.append(backend_specs[backend])
+            seen.add(backend)
+    for backend in ("pace", "newton"):
+        if backend not in seen:
+            ordered.append(backend_specs[backend])
+    return ordered
 
 
 def _impl_domain_randomization_update(
@@ -1543,7 +1874,7 @@ def _impl_release_candidate_gate(
             requirement_checks["physics_sysid"] = f"waived: {waiver['reason']}"
         else:
             requirement_checks["physics_sysid"] = "fail"
-            failures.append("release-candidate profile requires Newton or PACE SysID evidence, or an explicit SysID waiver")
+            failures.append("release-candidate profile requires PACE or Newton SysID evidence, or an explicit SysID waiver")
 
     if bool(ctx.config.release.get("require_camera_video_for_human_review", False)):
         camera_video = flat_previous.get("video_camera_tuning")
@@ -1704,7 +2035,10 @@ def _run_subcheck(
     )
     sub_out = parent_out / "subchecks" / skill_id
     sub_out.mkdir(parents=True, exist_ok=True)
-    result = impl(manifest, ctx, sub_out, previous)
+    try:
+        result = impl(manifest, ctx, sub_out, previous)
+    except Exception as exc:
+        result = _exception_result(manifest, sub_out, exc)
     result.release_blocking = release_blocking
     result.human_required = human_required
     result = _apply_quality_gate(manifest, result)
@@ -1852,12 +2186,13 @@ def _impl_physics_sysid(
 ) -> SkillResult:
     subchecks: dict[str, SkillResult] = {}
     local_previous = _flatten_previous_results(previous)
-    for skill_id, implementation, release_blocking, human_required in [
+    preference = [str(item).strip().lower() for item in ctx.config.sysid.get("sysid_backend_preference", ["pace", "newton", "local"])]
+    check_order = [
         ("sysid_step_response", "sysid_step_response", True, True),
         ("video_contact_friction", "video_contact_friction", False, True),
-        ("newton_sysid", "newton_sysid", False, False),
-        ("pace_sysid", "pace_sysid", False, False),
-    ]:
+    ]
+    check_order.extend(_ordered_sysid_backend_subchecks(preference))
+    for skill_id, implementation, release_blocking, human_required in check_order:
         result = _run_subcheck(
             skill_id,
             implementation,
@@ -1886,6 +2221,9 @@ def _impl_physics_sysid(
         },
         metrics={
             **local.metrics,
+            "run_reason": "Physics SysID runs in characterization because actuator, contact, friction, and fitted backend signals feed simulator parameter patches.",
+            "sysid_backend_preference": preference,
+            "sysid_backend_order": [skill_id for skill_id, *_ in check_order if skill_id in {"pace_sysid", "newton_sysid"}],
             "local_log_estimator": "used",
             "video_contact_friction": subchecks["video_contact_friction"].status,
             "video_contact_friction_metrics": subchecks["video_contact_friction"].metrics,
@@ -1899,7 +2237,7 @@ def _impl_physics_sysid(
     if physics_required and not backend_passed and not waiver["allowed"]:
         result.status = "fail"
         result.blocking_failures.append(
-            "physics profile requires Newton or PACE SysID evidence, but neither backend passed"
+            "physics profile requires PACE or Newton SysID evidence, but neither backend passed"
         )
     if bool(ctx.config.sysid.get("require_newton", False)) and newton.status != "pass":
         result.status = "fail"
@@ -1929,7 +2267,28 @@ def _impl_agentic_tuning_plan(
     dr = subchecks["domain_randomization_update"]
     action = subchecks["action_scale_sweep"]
     plan = subchecks["autoresearch_planner"]
-    return _aggregate_subchecks(
+    camera = local_previous.get("video_camera_tuning")
+    friction = local_previous.get("video_contact_friction")
+    gap = estimate_gap(load_records(ctx.dataset), ctx.config)
+    patch_dr = gap["recommendations"]["domain_randomization"]
+    if friction and friction.status == "pass":
+        patch_dr = apply_video_friction_to_domain_randomization(patch_dr, friction.metrics)
+    patch_action = dict(gap["recommendations"]["action_scale"])
+    if action.metrics.get("candidates") is not None:
+        patch_action["candidates"] = action.metrics["candidates"]
+    if action.metrics.get("suggested") is not None:
+        patch_action["suggested"] = action.metrics["suggested"]
+    sim_patch = build_sim_params_patch(
+        config=ctx.config,
+        dataset_path=ctx.dataset,
+        domain_randomization=patch_dr,
+        action_scale=patch_action,
+        camera_metrics=camera.metrics if camera else {},
+        friction_metrics=friction.metrics if friction else {},
+    )
+    sim_patch_yaml = write_sim_params_patch(skill_out / "sim_params_patch.yaml", sim_patch)
+    sim_patch_json = write_sim_params_patch_json(skill_out / "sim_params_patch.json", sim_patch)
+    result = _aggregate_subchecks(
         manifest,
         skill_out,
         "agentic_tuning_plan.json",
@@ -1943,8 +2302,14 @@ def _impl_agentic_tuning_plan(
             "suggested": action.metrics.get("suggested"),
             "experiment_count": plan.metrics.get("experiment_count"),
             "transfer_score": plan.metrics.get("transfer_score"),
+            "sim_params_patch": sim_patch_yaml,
+            "sim_params_patch_json": sim_patch_json,
+            "sim_params_patch_operation_count": len(sim_patch.get("operations", [])),
         },
     )
+    result.evidence_files.extend([sim_patch_yaml, sim_patch_json])
+    result.evidence_files = list(dict.fromkeys(result.evidence_files))
+    return result
 
 
 def _impl_regression_evaluation(

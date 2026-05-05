@@ -46,4 +46,5 @@ The relevant outputs are:
 - `outputs/ur10e_video_tuning_harness/subchecks/video_camera_tuning/video_camera_tuning.json`
 - `outputs/ur10e_video_tuning_harness/subchecks/video_contact_friction/video_contact_friction.json`
 - `outputs/ur10e_video_tuning_harness/subchecks/domain_randomization_update/domain_randomization_candidate.json`
-
+- `outputs/ur10e_video_tuning_harness/skills/agentic_tuning_plan/sim_params_patch.yaml`
+- `outputs/ur10e_video_tuning_harness/skills/agentic_tuning_plan/sim_params_patch.json`

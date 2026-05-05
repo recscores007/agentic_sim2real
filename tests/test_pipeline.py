@@ -36,6 +36,7 @@ class PipelineTests(unittest.TestCase):
         cfg = load_config(ROOT / "configs" / "ur10e_gear_assembly.example.json")
         self.assertEqual(choose_task(cfg), "Isaac-Deploy-GearAssembly-UR10e-2F140-v0")
         self.assertEqual(nominal_action_scale(cfg), 0.0325)
+        self.assertEqual(cfg.sysid["sysid_backend_preference"][:3], ["pace", "newton", "local"])
 
     def test_estimate_gap_contains_tutorial_parameters(self) -> None:
         cfg = load_config(ROOT / "configs" / "ur10e_gear_assembly.example.json")
@@ -125,13 +126,16 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(pipeline_output["run_version"], scorecard["run_version"])
             self.assertFalse(pipeline_output["safe_to_autorun_robot"])
             artifacts = scoreboard["artifacts"]
-            for key in ["ui", "state", "run_record", "real_data_manifest"]:
+            for key in ["ui", "state", "run_record", "real_data_manifest", "run_progress"]:
                 self.assertTrue(Path(artifacts[key]).exists())
             ui_state = json.loads(Path(artifacts["state"]).read_text())
             self.assertEqual(ui_state["schema_version"], "agentic_sim2real.pipeline_ui.v1")
             self.assertEqual(ui_state["audience"], "customer")
             self.assertEqual(ui_state["mode"], "characterization")
             self.assertIn("workflow", ui_state)
+            self.assertIn("run_progress", ui_state)
+            self.assertEqual(ui_state["run_progress"]["status"], "complete")
+            self.assertEqual(ui_state["run_progress"]["total_steps"], 7)
             self.assertIn("run_record", ui_state)
             self.assertIn("data_readiness", ui_state)
             self.assertIn("split_scores", ui_state)
@@ -153,6 +157,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(report["status"], "pass")
         self.assertIn("newton", report["sysid_backends"])
         self.assertIn("pace", report["sysid_backends"])
+        self.assertEqual(report["sysid_backends"]["preference"][0], "pace")
         self.assertTrue(report["sysid_backends"]["local"]["available"])
 
         cfg_with_pace_command = load_config(ROOT / "configs" / "ur10e_gear_assembly.example.json")
@@ -169,7 +174,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(report["status"], "fail")
         self.assertTrue(report["required_physics"]["physics_required"])
         joined = "\n".join(report["failures"])
-        self.assertIn("profile requires Newton or PACE SysID", joined)
+        self.assertIn("profile requires PACE or Newton SysID", joined)
 
     def test_required_physics_rejects_stub_backend_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -202,7 +207,7 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(scoreboard["status"], "fail")
             physics = scoreboard["skills"]["physics_sysid"]
             self.assertEqual(physics["status"], "fail")
-            self.assertIn("physics profile requires Newton or PACE", "\n".join(physics["blocking_failures"]))
+            self.assertIn("physics profile requires PACE or Newton", "\n".join(physics["blocking_failures"]))
 
     def test_custom_command_skill_overrides_builtin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -296,10 +301,16 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue((Path(tmp) / "pipeline_input.md").exists())
             self.assertTrue((Path(tmp) / "scorecard.json").exists())
             self.assertTrue((Path(tmp) / "pipeline_output.md").exists())
+            self.assertTrue((Path(tmp) / "run_progress.json").exists())
+            progress = json.loads((Path(tmp) / "run_progress.json").read_text())
+            self.assertEqual(progress["schema"], "agentic_sim2real.run_progress.v1")
+            self.assertEqual(progress["total_steps"], 7)
             self.assertIn("slide_contract_artifacts", trace)
             self.assertIn("ui_artifacts", trace)
             self.assertTrue(Path(trace["ui_artifacts"]["ui"]).exists())
             self.assertTrue(Path(trace["ui_artifacts"]["state"]).exists())
+            state = json.loads(Path(trace["ui_artifacts"]["state"]).read_text())
+            self.assertEqual(state["run_progress"]["total_steps"], 7)
 
     def test_llm_orchestrator_runs_skills_and_writes_journal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -333,6 +344,8 @@ class PipelineTests(unittest.TestCase):
             self.assertFalse(state["run"]["safe_to_autorun_robot"])
             self.assertFalse(state["scoreboard"]["safe_to_autorun_robot"])
             self.assertIn("pipeline_input", state)
+            self.assertIn("run_progress", state)
+            self.assertEqual(state["run_progress"]["total_steps"], 7)
             self.assertIn("rollout_summary", state)
             self.assertGreaterEqual(len(state["journal"]), 7)
             self.assertIn("characterization", state)
@@ -368,8 +381,9 @@ class PipelineTests(unittest.TestCase):
             )
             self.assertIn("Newton SysID did not run", newton_row["quality_rationale"])
             self.assertIn("skip/block", newton_row["confidence_rationale"])
+            self.assertIn("run_reason", newton_row)
             artifacts = summary["scoreboard"]["artifacts"]
-            for key in ["rollout_data", "pipeline_input", "scorecard", "pipeline_output", "run_record", "real_data_manifest", "ui", "state"]:
+            for key in ["rollout_data", "pipeline_input", "scorecard", "pipeline_output", "run_record", "real_data_manifest", "ui", "state", "run_progress"]:
                 self.assertTrue(Path(artifacts[key]).exists())
             final_output = json.loads(Path(artifacts["pipeline_output"]).read_text())
             self.assertEqual(final_output["schema"], "agentic_sim2real.slide_contract.v1.pipeline_output")
@@ -568,15 +582,18 @@ class PipelineTests(unittest.TestCase):
     def test_ur10e_video_golden_fixture_drives_camera_and_friction_dr(self) -> None:
         dataset = ROOT / "golden" / "real_datasets" / "ur10e_video_tuning"
         with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "out"
             scoreboard = run_harness(
                 root=ROOT,
                 config_path=ROOT / "configs" / "ur10e_gear_assembly.example.json",
                 dataset_path=dataset,
-                out_dir=Path(tmp) / "out",
+                out_dir=out_dir,
             )
             camera = scoreboard["subchecks"]["video_camera_tuning"]
             friction = scoreboard["subchecks"]["video_contact_friction"]
             dr = scoreboard["subchecks"]["domain_randomization_update"]["metrics"]
+            patch_yaml = out_dir / "skills" / "agentic_tuning_plan" / "sim_params_patch.yaml"
+            patch_json = out_dir / "skills" / "agentic_tuning_plan" / "sim_params_patch.json"
 
             self.assertEqual(camera["status"], "pass")
             self.assertEqual(friction["status"], "pass")
@@ -586,6 +603,17 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue(dr["video_friction_applied"])
             self.assertEqual(dr["video_friction"]["object_material"]["static_friction"], 0.88)
             self.assertEqual(dr["video_friction"]["friction_sweep_for_agent_experiments"], [0.73, 1.03])
+            self.assertTrue(patch_yaml.exists())
+            self.assertTrue(patch_json.exists())
+            self.assertIn("isaac_lab:", patch_yaml.read_text())
+            patch = json.loads(patch_json.read_text())
+            self.assertEqual(patch["patch"]["isaac_lab"]["env_cfg"]["camera"]["intrinsics"]["fx"], 909.4)
+            self.assertEqual(patch["patch"]["isaac_sim"]["physics_materials"]["task_object"]["static_friction"], 0.88)
+            operation_paths = {item["path"] for item in patch["operations"]}
+            self.assertIn(
+                "isaac_lab.env_cfg.domain_randomization.actuator_and_contact_randomization.object_material_static_friction",
+                operation_paths,
+            )
 
     def test_golden_data_readiness_stress_fixture_detects_expected_alerts(self) -> None:
         cfg = load_config(ROOT / "configs" / "ur10e_gear_assembly.example.json")
@@ -696,7 +724,7 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(result["status"], "pass")
             self.assertTrue(result["metrics"]["newton_fit_used"])
 
-    def test_pace_sysid_command_adapter_runs_as_backup(self) -> None:
+    def test_pace_sysid_command_adapter_runs_as_primary_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             runner = tmp_path / "fake_pace.py"
@@ -736,6 +764,73 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(result["status"], "pass")
             self.assertTrue(result["metrics"]["pace_fit_used"])
 
+    def test_pace_is_preferred_over_newton_when_both_are_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            pace_runner = tmp_path / "fake_pace.py"
+            pace_runner.write_text(
+                "\n".join(
+                    [
+                        "import json",
+                        "import os",
+                        "from pathlib import Path",
+                        "summary = json.loads(Path(os.environ['AGENTIC_SIM2REAL_PACE_INPUT_JSON']).read_text())",
+                        "Path(os.environ['AGENTIC_SIM2REAL_PACE_OUTPUT_JSON']).write_text(json.dumps({",
+                        "    'status': 'pass',",
+                        "    'confidence': 0.83,",
+                        "    'quality_score': 0.86,",
+                        "    'metrics': {'pace_fit_used': True, 'records': summary['records']},",
+                        "    'fitted_parameters': {'pace_delay_steps': 2},",
+                        "}) + '\\n')",
+                    ]
+                )
+                + "\n"
+            )
+            newton_marker = tmp_path / "newton_ran.txt"
+            newton_runner = tmp_path / "fake_newton.py"
+            newton_runner.write_text(
+                "\n".join(
+                    [
+                        "import json",
+                        "import os",
+                        "from pathlib import Path",
+                        f"Path({str(newton_marker)!r}).write_text('ran\\n')",
+                        "Path(os.environ['AGENTIC_SIM2REAL_NEWTON_OUTPUT_JSON']).write_text(json.dumps({",
+                        "    'status': 'pass',",
+                        "    'confidence': 0.82,",
+                        "    'quality_score': 0.84,",
+                        "    'metrics': {'newton_fit_used': True},",
+                        "}) + '\\n')",
+                    ]
+                )
+                + "\n"
+            )
+            config = json.loads((ROOT / "configs" / "ur10e_gear_assembly.example.json").read_text())
+            config["sysid"]["sysid_backend_preference"] = ["pace", "newton", "local"]
+            config["sysid"]["pace_enabled"] = True
+            config["sysid"]["pace_command"] = ["python3", str(pace_runner)]
+            config["sysid"]["min_pace_records"] = 3
+            config["sysid"]["newton_enabled"] = True
+            config["sysid"]["newton_command"] = ["python3", str(newton_runner)]
+            config_path = tmp_path / "config.json"
+            config_path.write_text(json.dumps(config) + "\n")
+
+            scoreboard = run_harness(
+                root=ROOT,
+                config_path=config_path,
+                dataset_path=ROOT / "embodiments" / "manipulator" / "ur10e_gear_assembly" / "real_data" / "example_session",
+                out_dir=tmp_path / "out",
+                only_skill="physics_sysid",
+            )
+
+            subchecks = scoreboard["skills"]["physics_sysid"]["metrics"]["subchecks"]
+            self.assertEqual(subchecks["pace_sysid"]["status"], "pass")
+            self.assertTrue(subchecks["pace_sysid"]["metrics"]["pace_fit_used"])
+            self.assertEqual(subchecks["newton_sysid"]["status"], "not_applicable")
+            self.assertEqual(subchecks["newton_sysid"]["metrics"]["fallback_skill"], "pace_sysid")
+            self.assertIn("PACE SysID passed", subchecks["newton_sysid"]["metrics"]["skip_reason"])
+            self.assertFalse(newton_marker.exists())
+
     def test_release_candidate_profile_blocks_missing_strong_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -751,7 +846,7 @@ class PipelineTests(unittest.TestCase):
             )
             self.assertEqual(trace["release_gate_decides"]["status"], "blocked")
             joined = json.dumps(trace["release_gate_decides"]["blocking_failures"])
-            self.assertIn("Newton or PACE SysID", joined)
+            self.assertIn("PACE or Newton SysID", joined)
             self.assertIn("held-out", joined)
             self.assertIn("Isaac Lab rollout", joined)
 

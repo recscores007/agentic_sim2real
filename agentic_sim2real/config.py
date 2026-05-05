@@ -120,7 +120,7 @@ DEFAULTS: dict[str, Any] = {
         "default_friction_spread": 0.15,
     },
     "sysid": {
-        "sysid_backend_preference": ["newton", "pace", "local"],
+        "sysid_backend_preference": ["pace", "newton", "local"],
         "newton_enabled": False,
         "require_newton": False,
         "newton_root": "",

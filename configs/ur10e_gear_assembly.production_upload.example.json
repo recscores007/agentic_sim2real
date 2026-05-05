@@ -24,7 +24,7 @@
     "rollout_metrics_path": "/abs/path/to/isaaclab_rollout_metrics.json"
   },
   "sysid": {
-    "sysid_backend_preference": ["newton", "pace"],
+    "sysid_backend_preference": ["pace", "newton"],
     "newton_enabled": true,
     "require_newton": false,
     "newton_root": "/abs/path/to/IsaacLab-Newton",

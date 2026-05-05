@@ -58,6 +58,7 @@ def run_evaluation_loop(
         audience=config.ui.get("audience"),
     )
     scoreboard = orchestrator["scoreboard"]
+    _copy_harness_progress(out / "harness", out)
     (out / "scoreboard.json").write_text(json.dumps(scoreboard, indent=2, sort_keys=True) + "\n")
     measurements = evaluator_measures(scoreboard, threshold_policy, out)
     critique = critic_challenges(scoreboard, threshold_policy, config, out)
@@ -99,6 +100,20 @@ def run_evaluation_loop(
     (out / "evaluation_trace.json").write_text(json.dumps(trace, indent=2, sort_keys=True) + "\n")
     (out / "evaluation_trace.md").write_text(write_trace_markdown(trace) + "\n")
     return trace
+
+
+def _copy_harness_progress(harness_dir: Path, out: Path) -> None:
+    progress = harness_dir / "run_progress.json"
+    progress_events = harness_dir / "run_progress.jsonl"
+    if progress.exists():
+        try:
+            payload = json.loads(progress.read_text())
+        except Exception:
+            payload = {}
+        if payload:
+            (out / "run_progress.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    if progress_events.exists():
+        (out / "run_progress.jsonl").write_text(progress_events.read_text())
 
 
 def load_threshold_policy(root: Path, threshold_policy_path: str | Path | None) -> dict[str, Any]:
@@ -205,9 +220,9 @@ def critic_challenges(
     if release_requires(config, "require_physics_sysid_for_human_review"):
         waiver = release_waiver(config, "allow_sysid_waiver", "sysid_waiver_reason")
         if not physics_passed and not waiver["allowed"]:
-            challenges.append("release-candidate profile requires Newton or PACE SysID evidence")
+            challenges.append("release-candidate profile requires PACE or Newton SysID evidence")
     elif not physics_passed:
-        observations.append("no Newton/PACE physics SysID backend produced fitted parameters")
+        observations.append("no PACE/Newton physics SysID backend produced fitted parameters")
 
     policy = expanded_skills.get("policy_artifact_audit", skills.get("project_preflight", {}))
     if policy.get("metrics", {}).get("using_sample_artifacts"):
