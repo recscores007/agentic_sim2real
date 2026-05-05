@@ -98,6 +98,15 @@ Every LLM choice must reduce to one of these auditable objects:
 The deterministic harness then validates that object before anything can be
 released.
 
+The non-deterministic layer is separated from the deterministic skill harness:
+
+| Lane | Pipeline Items | What Is Non-Deterministic? | What Validates It? |
+| --- | --- | --- | --- |
+| LLM orchestration | `llm_orchestrator.py`, `llm_orchestrator/journal.jsonl` | Gap triage and skill ordering | Guardrails accept only known skills with complete dependencies |
+| Agentic proposal skills | `autoresearch_planner`, `domain_randomization_update`, `action_scale_sweep` | Hypotheses, experiment plans, candidate DR/action-scale updates | Skill manifests, quality gates, bounded parameter checks, scorecards |
+| Critic/explanation roles | `evaluation_loop.py`, `scorecard.json`, `pipeline_output.json`, `run_record.json` | Challenge weak evidence and explain what changed | Release gate and generated evidence files; narrative has no approval authority |
+| Deterministic validators | All remaining release-blocking skills | No LLM judgment inside the measurement step | Pass/fail gates, metrics, confidence, blocking failures |
+
 | Non-Deterministic LLM Responsibility | What It Does | Why LLM Handles It | How It Is Atomically Validated |
 | --- | --- | --- | --- |
 | Gap triage | Decides whether the likely gap is perception, actuator, contact, latency, policy, deployment, or domain randomization | Real sim2real failures are messy and often have multiple plausible causes | User gap hints are recorded, then targeted skills such as `pose_repeatability`, `sysid_step_response`, `action_scale_sweep`, and `sim_eval_regression` produce metrics |
@@ -542,24 +551,24 @@ Atomic skills are the smallest validated building blocks in the pipeline. The
 agent can run them repeatedly, compare evidence, and improve proposals, but the
 release gate decides whether the whole chain is good enough for human review.
 
-| Skill | Agent | Purpose | Release Blocking |
-| --- | --- | --- | --- |
-| `env_preflight` | `orchestrator_agent` | Check local tools and environment | Yes |
-| `isaaclab_task_check` | `sim_agent` | Validate task id, observations, gripper, action scale | Yes |
-| `policy_artifact_audit` | `sim_agent` | Check `agent.yaml`, `env.yaml`, checkpoint metadata | Yes |
-| `ros_preflight` | `orchestrator_agent` | Check deployment middleware config | Yes |
-| `real_data_quality_gate` | `evaluator_agent` | Validate aligned records, calibration, and data completeness before SysID | Yes |
-| `pose_repeatability` | `perception_agent` | Validate object pose error under the configured gate | Yes |
-| `sysid_step_response` | `sysid_agent` | Estimate delay, stiction, contact, SysID targets | Yes |
-| `newton_sysid` | `sysid_agent` | Optionally run IsaacLab-Newton fitting from canonical records | No, unless required in config |
-| `pace_sysid` | `sysid_agent` | Optional PACE backup SysID when Newton is unavailable | No, unless required in config |
-| `domain_randomization_update` | `dr_agent` | Propose bounded DR updates | Yes |
-| `action_scale_sweep` | `sysid_agent` | Propose safe action-scale candidates | Yes |
-| `autoresearch_planner` | `autoresearch_agent` | Generate and rank experiments | Yes |
-| `sim_eval_regression` | `critic_agent` | Compare candidate vs baseline | Yes |
-| `isaaclab_rollout_regression` | `critic_agent` | Run or consume true Isaac Lab rollout metrics before release-candidate promotion | Yes |
-| `release_candidate_gate` | `safety_agent` | Aggregate evidence and block weak releases | Yes |
-| `real_robot_gate` | `safety_agent` | Require human approval before hardware command | Yes, `not_approved` by default |
+| Skill | Lane | Agent | Purpose | Release Blocking |
+| --- | --- | --- | --- | --- |
+| `env_preflight` | Deterministic validation | `orchestrator_agent` | Check local tools and environment | Yes |
+| `isaaclab_task_check` | Deterministic validation | `sim_agent` | Validate task id, observations, gripper, action scale | Yes |
+| `policy_artifact_audit` | Deterministic validation | `sim_agent` | Check `agent.yaml`, `env.yaml`, checkpoint metadata | Yes |
+| `ros_preflight` | Deterministic validation | `orchestrator_agent` | Check deployment middleware config | Yes |
+| `real_data_quality_gate` | Deterministic validation | `evaluator_agent` | Validate aligned records, calibration, and data completeness before SysID | Yes |
+| `pose_repeatability` | Deterministic measurement | `perception_agent` | Validate object pose error under the configured gate | Yes |
+| `sysid_step_response` | Deterministic measurement | `sysid_agent` | Estimate delay, stiction, contact, SysID targets | Yes |
+| `newton_sysid` | Backend adapter | `sysid_agent` | Optionally run IsaacLab-Newton fitting from canonical records | No, unless required in config |
+| `pace_sysid` | Backend adapter | `sysid_agent` | Optional PACE backup SysID when Newton is unavailable | No, unless required in config |
+| `domain_randomization_update` | Agentic proposal skill | `dr_agent` | Propose bounded DR updates | Yes |
+| `action_scale_sweep` | Agentic proposal skill | `sysid_agent` | Propose safe action-scale candidates | Yes |
+| `autoresearch_planner` | Agentic proposal skill | `autoresearch_agent` | Generate and rank experiments | Yes |
+| `sim_eval_regression` | Deterministic critic/regression | `critic_agent` | Compare candidate vs baseline | Yes |
+| `isaaclab_rollout_regression` | Deterministic critic/regression | `critic_agent` | Run or consume true Isaac Lab rollout metrics before release-candidate promotion | Yes |
+| `release_candidate_gate` | Deterministic gate | `safety_agent` | Aggregate evidence and block weak releases | Yes |
+| `real_robot_gate` | Human gate | `safety_agent` | Require human approval before hardware command | Yes, `not_approved` by default |
 
 Each skill writes:
 

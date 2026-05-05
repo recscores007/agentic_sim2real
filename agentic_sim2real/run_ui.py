@@ -9,6 +9,73 @@ from typing import Any
 
 UI_SCHEMA_VERSION = "agentic_sim2real.pipeline_ui.v1"
 
+AGENTIC_PROPOSAL_SKILLS = {
+    "autoresearch_planner": {
+        "role": "Hypothesis and experiment planning",
+        "why_agentic": "Chooses what to investigate next from messy evidence.",
+    },
+    "domain_randomization_update": {
+        "role": "Bounded sim-parameter proposal",
+        "why_agentic": "Turns measured gaps into candidate DR ranges for validation.",
+    },
+    "action_scale_sweep": {
+        "role": "Bounded control-parameter proposal",
+        "why_agentic": "Suggests action-scale candidates from stiction/contact evidence.",
+    },
+}
+
+NONDETERMINISTIC_COVERAGE = [
+    {
+        "responsibility": "Gap triage",
+        "covered_by": "LLM orchestrator",
+        "is_atomic_skill": False,
+        "skill_ids": ["real_data_quality_gate", "pose_repeatability", "sysid_step_response"],
+        "validation": "Guardrails require known skills and complete dependencies; selected skills produce metrics.",
+    },
+    {
+        "responsibility": "Skill ordering",
+        "covered_by": "LLM orchestrator",
+        "is_atomic_skill": False,
+        "skill_ids": ["llm_orchestrator/journal.jsonl"],
+        "validation": "Every decision is journaled and rejected if the skill is unknown, repeated, unsafe, or missing dependencies.",
+    },
+    {
+        "responsibility": "Hypothesis generation",
+        "covered_by": "autoresearch_planner",
+        "is_atomic_skill": True,
+        "skill_ids": ["autoresearch_planner"],
+        "validation": "Plan must emit enough experiments and cite measured gap evidence.",
+    },
+    {
+        "responsibility": "Experiment planning",
+        "covered_by": "autoresearch_planner",
+        "is_atomic_skill": True,
+        "skill_ids": ["autoresearch_planner", "newton_sysid", "pace_sysid", "sim_eval_regression"],
+        "validation": "Proposed experiments must map to manifest-backed skills or explicit human review.",
+    },
+    {
+        "responsibility": "Candidate parameter proposals",
+        "covered_by": "domain_randomization_update, action_scale_sweep",
+        "is_atomic_skill": True,
+        "skill_ids": ["domain_randomization_update", "action_scale_sweep"],
+        "validation": "Candidate ranges are bounded by safety caps, pose gates, friction bounds, and contact limits.",
+    },
+    {
+        "responsibility": "Critic challenge",
+        "covered_by": "evaluation_loop critic + regression skills",
+        "is_atomic_skill": False,
+        "skill_ids": ["sim_eval_regression", "isaaclab_rollout_regression"],
+        "validation": "Weak evidence, low confidence, sparse labels, skipped backends, and regressions become warnings or blockers.",
+    },
+    {
+        "responsibility": "Report and explanation",
+        "covered_by": "scorecard, pipeline_output, run_record",
+        "is_atomic_skill": False,
+        "skill_ids": ["scorecard.json", "pipeline_output.json", "run_record.json"],
+        "validation": "Narrative output has no release authority; it must point back to generated evidence files.",
+    },
+]
+
 
 def write_pipeline_ui(
     run_dir: str | Path,
@@ -143,6 +210,31 @@ def _rollout_summary(rollout_data: dict[str, Any]) -> dict[str, Any]:
 
 def _scoreboard_summary(scoreboard: dict[str, Any]) -> dict[str, Any]:
     skills = scoreboard.get("skills", {})
+    skill_rows = [
+        {
+            "skill_id": skill_id,
+            "status": result.get("status"),
+            "quality_score": result.get("quality_score"),
+            "confidence": result.get("confidence"),
+            "release_blocking": result.get("release_blocking"),
+            "human_required": result.get("human_required"),
+        }
+        for skill_id, result in sorted(skills.items())
+    ]
+    agentic_rows = [
+        {
+            **row,
+            "agentic_role": AGENTIC_PROPOSAL_SKILLS[row["skill_id"]]["role"],
+            "why_agentic": AGENTIC_PROPOSAL_SKILLS[row["skill_id"]]["why_agentic"],
+        }
+        for row in skill_rows
+        if row["skill_id"] in AGENTIC_PROPOSAL_SKILLS
+    ]
+    deterministic_rows = [
+        row
+        for row in skill_rows
+        if row["skill_id"] not in AGENTIC_PROPOSAL_SKILLS
+    ]
     return {
         "status": scoreboard.get("status"),
         "release_profile": scoreboard.get("release_profile"),
@@ -154,17 +246,10 @@ def _scoreboard_summary(scoreboard: dict[str, Any]) -> dict[str, Any]:
         "hardware_approval_status": scoreboard.get("hardware_approval_status"),
         "safe_to_autorun_robot": False,
         "blocking_failures": scoreboard.get("blocking_failures", []),
-        "skills": [
-            {
-                "skill_id": skill_id,
-                "status": result.get("status"),
-                "quality_score": result.get("quality_score"),
-                "confidence": result.get("confidence"),
-                "release_blocking": result.get("release_blocking"),
-                "human_required": result.get("human_required"),
-            }
-            for skill_id, result in sorted(skills.items())
-        ],
+        "nondeterministic_coverage": NONDETERMINISTIC_COVERAGE,
+        "agentic_proposal_skills": agentic_rows,
+        "deterministic_validation_skills": deterministic_rows,
+        "skills": skill_rows,
     }
 
 
@@ -401,7 +486,24 @@ const recordHtml = `
   <p class="note"><code>run_record.json</code> links this run version to the exact real-data manifest, policy checkpoint, score breakdowns, skill evidence, and release gates.</p>
 </section>`;
 
-const skills = (board.skills || []).map(row => `<tr>
+const coverageRows = (board.nondeterministic_coverage || []).map(row => `<tr>
+  <td>${{fmt(row.responsibility)}}</td>
+  <td>${{fmt(row.covered_by)}}</td>
+  <td>${{row.is_atomic_skill ? pill("atomic skill", "agent") : pill("agent role", "gate")}}</td>
+  <td><code>${{fmt((row.skill_ids || []).join(", "))}}</code></td>
+  <td>${{fmt(row.validation)}}</td>
+</tr>`).join("");
+
+const proposalSkills = (board.agentic_proposal_skills || []).map(row => `<tr>
+  <td><code>${{row.skill_id}}</code></td>
+  <td>${{fmt(row.agentic_role)}}</td>
+  <td>${{pill(row.status)}}</td>
+  <td>${{num(row.quality_score)}}</td>
+  <td>${{num(row.confidence)}}</td>
+  <td>${{fmt(row.why_agentic)}}</td>
+</tr>`).join("");
+
+const deterministicSkills = (board.deterministic_validation_skills || []).map(row => `<tr>
   <td><code>${{row.skill_id}}</code></td>
   <td>${{pill(row.status)}}</td>
   <td>${{num(row.quality_score)}}</td>
@@ -409,6 +511,21 @@ const skills = (board.skills || []).map(row => `<tr>
   <td>${{row.release_blocking ? "yes" : "no"}}</td>
   <td>${{row.human_required ? "yes" : "no"}}</td>
 </tr>`).join("");
+
+const nondetHtml = `
+<section class="panel wide">
+  <h2>Non-Deterministic Coverage</h2>
+  <p class="note">The LLM-style part proposes, orders, critiques, or explains. The harness still validates through atomic evidence.</p>
+  <table><thead><tr><th>Responsibility</th><th>Covered by</th><th>Type</th><th>Related skill/artifact</th><th>Validation boundary</th></tr></thead><tbody>${{coverageRows}}</tbody></table>
+  <h3 style="margin-top:14px">Proposal-Producing Atomic Skills</h3>
+  <table><thead><tr><th>Skill</th><th>Agentic role</th><th>Status</th><th>Score</th><th>Confidence</th><th>Why it is in this lane</th></tr></thead><tbody>${{proposalSkills || "<tr><td colspan='6' class='note'>No proposal-producing skills ran in this run.</td></tr>"}}</tbody></table>
+</section>`;
+
+const deterministicHtml = `
+<section class="panel wide">
+  <h2>Deterministic Validation Skills</h2>
+  <table><thead><tr><th>Skill</th><th>Status</th><th>Score</th><th>Confidence</th><th>Release blocking</th><th>Human required</th></tr></thead><tbody>${{deterministicSkills}}</tbody></table>
+</section>`;
 
 const journal = (state.journal || []).slice(-9).map(row => `<div class="journal-item">
   <b>#${{fmt(row.step)}} ${{fmt(row.skill_id || row.action)}}</b>
@@ -421,7 +538,8 @@ document.getElementById("app").innerHTML = [
   workflowHtml,
   `<div class="lane-grid">${{charHtml}}${{releaseHtml}}</div>`,
   recordHtml,
-  `<section class="panel wide"><h2>Skill Validation</h2><table><thead><tr><th>Skill</th><th>Status</th><th>Score</th><th>Confidence</th><th>Release blocking</th><th>Human required</th></tr></thead><tbody>${{skills}}</tbody></table></section>`,
+  nondetHtml,
+  deterministicHtml,
   `<section class="panel wide"><h2>LLM Orchestrator Journal</h2><div class="journal">${{journal || "<span class='note'>No LLM journal found for this run.</span>"}}</div></section>`,
   `<section class="panel wide"><h2>Score Meaning</h2><p class="note">${{fmt(score.score_meaning?.release_gap_score)}} ${{fmt(score.score_meaning?.target_source)}} Formula: ${{fmt(score.score_meaning?.formula)}}</p></section>`
 ].join("");

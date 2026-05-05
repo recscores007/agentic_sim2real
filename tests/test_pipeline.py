@@ -279,6 +279,16 @@ class PipelineTests(unittest.TestCase):
             self.assertGreaterEqual(len(state["journal"]), 15)
             self.assertIn("characterization", state)
             self.assertIn("policy_release", state)
+            self.assertIn("nondeterministic_coverage", state["scoreboard"])
+            self.assertIn("agentic_proposal_skills", state["scoreboard"])
+            self.assertIn("deterministic_validation_skills", state["scoreboard"])
+            proposal_ids = {
+                row["skill_id"]
+                for row in state["scoreboard"]["agentic_proposal_skills"]
+            }
+            self.assertIn("autoresearch_planner", proposal_ids)
+            self.assertIn("domain_randomization_update", proposal_ids)
+            self.assertIn("action_scale_sweep", proposal_ids)
             artifacts = summary["scoreboard"]["artifacts"]
             for key in ["rollout_data", "pipeline_input", "scorecard", "pipeline_output", "run_record", "real_data_manifest", "ui", "state"]:
                 self.assertTrue(Path(artifacts[key]).exists())
