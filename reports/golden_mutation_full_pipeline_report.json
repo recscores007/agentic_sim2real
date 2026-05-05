@@ -1,0 +1,192 @@
+{
+  "definition_of_pass": "A mutation test passes when all expected alert codes are observed. Full pipeline status may be pass or fail; fail means a downstream gate blocked weak evidence.",
+  "rows": [
+    {
+      "blocking_failures": [],
+      "expected_alert_codes": [],
+      "harness_out": "./outputs/golden_mutation_pipeline_report/full_harness/clean_baseline",
+      "human_review_readiness": "smoke_review_only",
+      "missing_expected_alert_codes": [],
+      "mutation_id": "clean_baseline",
+      "mutation_status": "pass",
+      "observed_alert_codes": [],
+      "pipeline_behavior_note": "completed smoke/offline harness while surfacing readiness alerts",
+      "pipeline_blocked": false,
+      "pipeline_status": "pass",
+      "readiness_status": "ready",
+      "release_gap_score": 0.425,
+      "scorecard": "./outputs/golden_mutation_pipeline_report/full_harness/clean_baseline/scorecard.json",
+      "test_outcome": "pass",
+      "transfer_readiness_score": 0.575,
+      "ui": "./outputs/golden_mutation_pipeline_report/full_harness/clean_baseline/ui/index.html",
+      "variant_path": "./outputs/golden_mutation_pipeline_report/clean_baseline"
+    },
+    {
+      "blocking_failures": [],
+      "expected_alert_codes": [
+        "heldout_frames_missing",
+        "low_frame_link_coverage",
+        "episode_frame_gaps"
+      ],
+      "harness_out": "./outputs/golden_mutation_pipeline_report/full_harness/drop_all_camera_links",
+      "human_review_readiness": "smoke_review_only",
+      "missing_expected_alert_codes": [],
+      "mutation_id": "drop_all_camera_links",
+      "mutation_status": "pass",
+      "observed_alert_codes": [
+        "heldout_frames_missing",
+        "low_frame_link_coverage",
+        "episode_frame_gaps"
+      ],
+      "pipeline_behavior_note": "completed smoke/offline harness while surfacing readiness alerts",
+      "pipeline_blocked": false,
+      "pipeline_status": "pass",
+      "readiness_status": "needs_attention",
+      "release_gap_score": 0.425,
+      "scorecard": "./outputs/golden_mutation_pipeline_report/full_harness/drop_all_camera_links/scorecard.json",
+      "test_outcome": "pass",
+      "transfer_readiness_score": 0.575,
+      "ui": "./outputs/golden_mutation_pipeline_report/full_harness/drop_all_camera_links/ui/index.html",
+      "variant_path": "./outputs/golden_mutation_pipeline_report/drop_all_camera_links"
+    },
+    {
+      "blocking_failures": [],
+      "expected_alert_codes": [
+        "heldout_frames_missing",
+        "episode_frame_gaps"
+      ],
+      "harness_out": "./outputs/golden_mutation_pipeline_report/full_harness/heldout_without_frames",
+      "human_review_readiness": "smoke_review_only",
+      "missing_expected_alert_codes": [],
+      "mutation_id": "heldout_without_frames",
+      "mutation_status": "pass",
+      "observed_alert_codes": [
+        "heldout_frames_missing",
+        "episode_frame_gaps"
+      ],
+      "pipeline_behavior_note": "completed smoke/offline harness while surfacing readiness alerts",
+      "pipeline_blocked": false,
+      "pipeline_status": "pass",
+      "readiness_status": "needs_attention",
+      "release_gap_score": 0.425,
+      "scorecard": "./outputs/golden_mutation_pipeline_report/full_harness/heldout_without_frames/scorecard.json",
+      "test_outcome": "pass",
+      "transfer_readiness_score": 0.575,
+      "ui": "./outputs/golden_mutation_pipeline_report/full_harness/heldout_without_frames/ui/index.html",
+      "variant_path": "./outputs/golden_mutation_pipeline_report/heldout_without_frames"
+    },
+    {
+      "blocking_failures": [],
+      "expected_alert_codes": [
+        "orphan_frames_detected"
+      ],
+      "harness_out": "./outputs/golden_mutation_pipeline_report/full_harness/orphan_sbl_frames",
+      "human_review_readiness": "smoke_review_only",
+      "missing_expected_alert_codes": [],
+      "mutation_id": "orphan_sbl_frames",
+      "mutation_status": "pass",
+      "observed_alert_codes": [
+        "orphan_frames_detected"
+      ],
+      "pipeline_behavior_note": "completed smoke/offline harness while surfacing readiness alerts",
+      "pipeline_blocked": false,
+      "pipeline_status": "pass",
+      "readiness_status": "needs_attention",
+      "release_gap_score": 0.425,
+      "scorecard": "./outputs/golden_mutation_pipeline_report/full_harness/orphan_sbl_frames/scorecard.json",
+      "test_outcome": "pass",
+      "transfer_readiness_score": 0.575,
+      "ui": "./outputs/golden_mutation_pipeline_report/full_harness/orphan_sbl_frames/ui/index.html",
+      "variant_path": "./outputs/golden_mutation_pipeline_report/orphan_sbl_frames"
+    },
+    {
+      "blocking_failures": [],
+      "expected_alert_codes": [
+        "delay_under_sampled"
+      ],
+      "harness_out": "./outputs/golden_mutation_pipeline_report/full_harness/low_rate_telemetry",
+      "human_review_readiness": "smoke_review_only",
+      "missing_expected_alert_codes": [],
+      "mutation_id": "low_rate_telemetry",
+      "mutation_status": "pass",
+      "observed_alert_codes": [
+        "delay_under_sampled"
+      ],
+      "pipeline_behavior_note": "completed smoke/offline harness while surfacing readiness alerts",
+      "pipeline_blocked": false,
+      "pipeline_status": "pass",
+      "readiness_status": "needs_attention",
+      "release_gap_score": 0.324,
+      "scorecard": "./outputs/golden_mutation_pipeline_report/full_harness/low_rate_telemetry/scorecard.json",
+      "test_outcome": "pass",
+      "transfer_readiness_score": 0.676,
+      "ui": "./outputs/golden_mutation_pipeline_report/full_harness/low_rate_telemetry/ui/index.html",
+      "variant_path": "./outputs/golden_mutation_pipeline_report/low_rate_telemetry"
+    },
+    {
+      "blocking_failures": [],
+      "expected_alert_codes": [
+        "auto_positive_success_labels"
+      ],
+      "harness_out": "./outputs/golden_mutation_pipeline_report/full_harness/auto_positive_labels",
+      "human_review_readiness": "smoke_review_only",
+      "missing_expected_alert_codes": [],
+      "mutation_id": "auto_positive_labels",
+      "mutation_status": "pass",
+      "observed_alert_codes": [
+        "auto_positive_success_labels"
+      ],
+      "pipeline_behavior_note": "completed smoke/offline harness while surfacing readiness alerts",
+      "pipeline_blocked": false,
+      "pipeline_status": "pass",
+      "readiness_status": "needs_attention",
+      "release_gap_score": 0.485,
+      "scorecard": "./outputs/golden_mutation_pipeline_report/full_harness/auto_positive_labels/scorecard.json",
+      "test_outcome": "pass",
+      "transfer_readiness_score": 0.515,
+      "ui": "./outputs/golden_mutation_pipeline_report/full_harness/auto_positive_labels/ui/index.html",
+      "variant_path": "./outputs/golden_mutation_pipeline_report/auto_positive_labels"
+    },
+    {
+      "blocking_failures": [
+        {
+          "failures": [
+            "candidate pose p95 error exceeds calibration gate"
+          ],
+          "skill_id": "sim_eval_regression"
+        },
+        {
+          "failures": [
+            "sim_eval_regression failed: ['candidate pose p95 error exceeds calibration gate']"
+          ],
+          "skill_id": "release_candidate_gate"
+        }
+      ],
+      "expected_alert_codes": [
+        "fk_proxy_pose_validation"
+      ],
+      "harness_out": "./outputs/golden_mutation_pipeline_report/full_harness/fk_proxy_pose",
+      "human_review_readiness": "not_ready",
+      "missing_expected_alert_codes": [],
+      "mutation_id": "fk_proxy_pose",
+      "mutation_status": "pass",
+      "observed_alert_codes": [
+        "fk_proxy_pose_validation"
+      ],
+      "pipeline_behavior_note": "blocked by release/validation gate; this is acceptable when expected alerts were detected",
+      "pipeline_blocked": true,
+      "pipeline_status": "fail",
+      "readiness_status": "needs_attention",
+      "release_gap_score": 0.5,
+      "scorecard": "./outputs/golden_mutation_pipeline_report/full_harness/fk_proxy_pose/scorecard.json",
+      "test_outcome": "pass",
+      "transfer_readiness_score": 0.5,
+      "ui": "./outputs/golden_mutation_pipeline_report/full_harness/fk_proxy_pose/ui/index.html",
+      "variant_path": "./outputs/golden_mutation_pipeline_report/fk_proxy_pose"
+    }
+  ],
+  "schema": "agentic_sim2real.golden_mutation_full_pipeline_report.v1",
+  "source_mutation_report": "./outputs/golden_mutation_pipeline_report/mutation_report.json",
+  "status": "pass",
+  "variant_count": 7
+}

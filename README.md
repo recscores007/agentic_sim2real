@@ -299,6 +299,16 @@ Current dynamic variants cover all-camera-dropout, heldout-only frame loss,
 orphan frame extraction, low-rate telemetry, auto-positive labels, and FK-proxy
 pose validation.
 
+Committed sample reports from the latest dynamic mutation sweep are available
+under `reports/`:
+
+```text
+reports/golden_mutation_full_pipeline_report.md
+reports/golden_mutation_full_pipeline_report.json
+reports/golden_mutation_readiness_report.md
+reports/golden_mutation_readiness_report.json
+```
+
 ## Release Profiles
 
 Default config uses `release.profile="smoke"` so a new user can validate the
