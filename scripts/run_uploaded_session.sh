@@ -25,6 +25,7 @@ python3 -m agentic_sim2real.cli --config "${AGENTIC_SIM2REAL_CONFIG}" preflight 
 
 echo
 echo "Preparing uploaded session:"
+echo "  Video evidence, when present, is read from ${SESSION_DIR}/video_data/index.csv and ${SESSION_DIR}/video_data/analysis.json"
 python3 -m agentic_sim2real.cli --config "${AGENTIC_SIM2REAL_CONFIG}" prepare-real-data \
   --root "${ROOT_DIR}" \
   --session "${SESSION_DIR}" \

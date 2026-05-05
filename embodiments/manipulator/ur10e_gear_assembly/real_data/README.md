@@ -53,6 +53,11 @@ embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>/
     index.csv
     color/
     depth/
+  video_data/
+    index.csv
+    analysis.json
+    camera_calibration.mp4
+    contact_friction.mp4
   joint_data/
     joint_states.csv
   pose_data/
@@ -77,16 +82,20 @@ embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>/
 | `episode_labels/labels.csv` | Strongly recommended | Success/failure labels and failure modes |
 | `contact_data/contact.csv` | Recommended | Contact force or force proxy |
 | `camera_data/index.csv` | Recommended | Image/depth file provenance |
+| `video_data/index.csv` | Recommended for customer uploads | Uploaded task, camera-calibration, object-contact, and gripper-contact videos |
+| `video_data/analysis.json` | Recommended for customer uploads | Camera reprojection metrics and object/gripper friction estimates extracted from uploaded videos |
 | `calibration/calibration.json` | Yes for embodiment sessions | Robot calibration, camera intrinsics/extrinsics, frame names |
 
 ## What The Human Provides
 
-- Camera frames or ROS bag references
+- Camera frames, uploaded videos, or ROS bag references
 - Joint state/action logs
 - Commanded joint-position logs when Newton SysID should fit actuator parameters
 - FoundationPose shaft pose estimates
 - Reference/validation shaft poses when available
 - Contact force or force-proxy logs
+- Camera calibration video analysis for intrinsics/extrinsics and latency
+- Contact/friction video analysis for object slip, stick-slip events, and gripper pad friction
 - Episode labels: success, slip, jam, pose miss, camera dropout, calibration issue
 - Calibration file paths and frame names
 
@@ -106,7 +115,8 @@ The converter creates JSONL rows like:
   "object_pose_reference": [0.500, 0.100, 0.220, 0.0, 0.0, 0.0, 1.0],
   "contact_force": 4.0,
   "success": true,
-  "failure_mode": null
+  "failure_mode": null,
+  "source_session_dir": "embodiments/manipulator/ur10e_gear_assembly/real_data/example_session"
 }
 ```
 

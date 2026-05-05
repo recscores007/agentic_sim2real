@@ -2,13 +2,14 @@
   "id": "agentic_tuning_plan",
   "name": "Agentic Tuning Plan",
   "owner_agent": "autoresearch_agent",
-  "description": "Convert measured gaps into bounded domain-randomization updates, action-scale candidates, hypotheses, and ranked experiments.",
+  "description": "Convert measured gaps and uploaded video evidence into bounded camera, friction, domain-randomization, action-scale, and experiment proposals.",
   "implementation": "agentic_tuning_plan",
   "depends_on": ["physics_sysid"],
-  "inputs": ["gap_estimates", "config.robot", "config.perception"],
+  "inputs": ["gap_estimates", "video_contact_friction", "video_camera_tuning", "config.robot", "config.perception"],
   "outputs": ["agentic_tuning_plan.json", "subchecks/*/result.json", "result.json"],
   "validators": [
     "domain-randomization recommendations must stay within configured safety bounds",
+    "video-derived object and gripper friction recommendations must stay inside conservative sim bounds",
     "action-scale candidates must include nominal scale and stay under the configured maximum",
     "AutoResearch plan must include bounded experiments and may promote only to human review"
   ],

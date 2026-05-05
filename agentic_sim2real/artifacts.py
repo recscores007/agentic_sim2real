@@ -1110,6 +1110,8 @@ def _collect_patches(results: dict[str, dict[str, Any]]) -> list[dict[str, Any]]
             patch_bits.append(f"object_pos_noise {metrics['object_pos_noise']}")
         if metrics.get("friction_sweep") is not None:
             patch_bits.append(f"friction_sweep {metrics['friction_sweep']}")
+        if metrics.get("video_friction_applied"):
+            patch_bits.append("video friction -> object/gripper material params")
         if patch_bits:
             patches.append({"skill": "domain_randomization_update", "patch": "; ".join(patch_bits), "status": dr.get("status")})
     for skill in ("newton_sysid", "pace_sysid"):
@@ -1240,8 +1242,10 @@ def _characterization_metrics(gap: dict[str, Any], plan: dict[str, Any], results
     contact = gap.get("contact", {})
     recommendations = gap.get("recommendations", {})
     real_data_quality = results.get("real_data_quality_gate", {}).get("metrics", {})
+    video_camera = results.get("video_camera_tuning", {}).get("metrics", {})
+    video_friction = results.get("video_contact_friction", {}).get("metrics", {})
     return {
-        "purpose": "Use real trajectory, camera, pose, and contact data to tune sim parameters before policy training.",
+        "purpose": "Use real trajectory, uploaded video, camera, pose, and contact data to tune sim parameters before policy training.",
         "trajectory_data": {
             "episodes": summary.get("episodes"),
             "records": summary.get("records"),
@@ -1268,6 +1272,12 @@ def _characterization_metrics(gap: dict[str, Any], plan: dict[str, Any], results
             "orientation_error_p95_deg": pose.get("orientation_error_p95_deg"),
             "validation_source": pose.get("validation_source"),
         },
+        "camera_video_tuning": {
+            "video_count": video_camera.get("camera_video_count"),
+            "analysis_available": video_camera.get("analysis_available"),
+            "reprojection_error_px": video_camera.get("reprojection_error_px"),
+            "suggested_camera_parameters": video_camera.get("suggested_camera_parameters", {}),
+        },
         "contact": {
             "samples": contact.get("samples"),
             "mean_force_n": contact.get("mean_force_n", contact.get("mean_n")),
@@ -1275,6 +1285,16 @@ def _characterization_metrics(gap: dict[str, Any], plan: dict[str, Any], results
             "peak_force_n": contact.get("peak_force_n", contact.get("peak_n")),
             "over_limit_ratio": contact.get("over_limit_ratio"),
             "force_limit_n": contact.get("force_limit_n"),
+        },
+        "contact_friction_video": {
+            "video_count": video_friction.get("friction_video_count"),
+            "analysis_available": video_friction.get("analysis_available"),
+            "object_static_friction": video_friction.get("object_static_friction"),
+            "object_dynamic_friction": video_friction.get("object_dynamic_friction"),
+            "gripper_pad_static_friction": video_friction.get("gripper_pad_static_friction"),
+            "gripper_pad_dynamic_friction": video_friction.get("gripper_pad_dynamic_friction"),
+            "slip_ratio": video_friction.get("slip_ratio"),
+            "suggested_sim_params": video_friction.get("suggested_sim_params", {}),
         },
         "sysid_backends": {
             "local_log_estimator": "used",

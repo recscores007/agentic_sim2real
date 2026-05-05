@@ -2,16 +2,17 @@
   "id": "real_data_evidence_gate",
   "name": "Real Data Evidence Gate",
   "owner_agent": "evaluator_agent",
-  "description": "Validate submitted real data and pose repeatability before SysID, agentic tuning, or release scoring trust the evidence.",
+  "description": "Validate submitted real data, uploaded camera video evidence, and pose repeatability before SysID, agentic tuning, or release scoring trust the evidence.",
   "implementation": "real_data_evidence_gate",
   "depends_on": ["project_preflight"],
-  "inputs": ["aligned_records", "calibration", "config.perception"],
-  "outputs": ["real_data_evidence_gate.json", "subchecks/*/result.json", "result.json"],
+  "inputs": ["aligned_records", "calibration", "uploaded_videos", "config.perception", "config.video_evidence"],
+  "outputs": ["real_data_evidence_gate.json", "subchecks/*/result.json", "subchecks/video_camera_tuning/video_camera_tuning.json", "result.json"],
   "validators": [
     "aligned records must include consistent action and joint dimensions",
     "minimum configured episode count must be present",
     "object pose estimate and reference fields must be populated",
-    "pose repeatability must stay under the configured real-robot pose gate"
+    "pose repeatability must stay under the configured real-robot pose gate",
+    "uploaded camera/calibration videos should provide reprojection and suggested camera-parameter evidence when configured"
   ],
   "quality_gate": {"min_score": 0.7},
   "human_required": true,

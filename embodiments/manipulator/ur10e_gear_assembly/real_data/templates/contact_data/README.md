@@ -12,3 +12,9 @@ Columns:
 If you do not have a force sensor, use a force proxy from the controller or
 leave this file empty. The evaluator will still run, but contact quality will be
 lower.
+
+For customer uploads, also add contact/friction videos under `video_data/` and
+list them in `video_data/index.csv`. Video analysis should report object slip,
+stick-slip events, object material friction, and gripper pad friction in
+`video_data/analysis.json` so the sim can tune object and gripper contact
+parameters.

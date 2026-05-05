@@ -1,0 +1,30 @@
+{
+  "camera_calibration": {
+    "confidence": 0.8,
+    "observed_target_count": 24,
+    "reprojection_error_px": 0.8,
+    "suggested_extrinsic_delta": {
+      "roll_deg": 0.0,
+      "pitch_deg": 0.0,
+      "yaw_deg": 0.0,
+      "x_m": 0.0,
+      "y_m": 0.0,
+      "z_m": 0.0
+    },
+    "suggested_intrinsics": {
+      "cx": 640.0,
+      "cy": 360.0,
+      "fx": 910.0,
+      "fy": 910.0
+    }
+  },
+  "contact_friction": {
+    "confidence": 0.72,
+    "gripper_pad_dynamic_friction": 0.95,
+    "gripper_pad_static_friction": 1.1,
+    "object_dynamic_friction": 0.68,
+    "object_static_friction": 0.82,
+    "slip_ratio": 0.04,
+    "stick_slip_events": 1
+  }
+}

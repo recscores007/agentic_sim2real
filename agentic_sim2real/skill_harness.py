@@ -20,6 +20,12 @@ from .release_policy import is_sample_policy_artifact_path, release_profile, rel
 from .run_ui import write_pipeline_ui
 from .safety import require_real_robot_gate
 from .sysid import estimate_gap
+from .video_evidence import (
+    apply_video_friction_to_domain_randomization,
+    camera_tuning_from_video,
+    collect_video_evidence,
+    friction_tuning_from_video,
+)
 
 
 ALLOWED_SKILL_STATUSES = {"pass", "fail", "skip", "not_applicable", "not_approved", "evidence_missing"}
@@ -64,9 +70,11 @@ SUBCHECK_MIN_SCORES = {
     "ros_preflight": 0.8,
     "real_data_quality_gate": 0.7,
     "pose_repeatability": 0.7,
+    "video_camera_tuning": 0.6,
     "sysid_step_response": 0.6,
     "newton_sysid": 0.6,
     "pace_sysid": 0.6,
+    "video_contact_friction": 0.55,
     "domain_randomization_update": 0.8,
     "action_scale_sweep": 0.7,
     "autoresearch_planner": 0.8,
@@ -851,6 +859,33 @@ def _impl_real_data_quality_gate(
     )
 
 
+def _impl_video_camera_tuning(
+    manifest: SkillManifest,
+    ctx: HarnessContext,
+    skill_out: Path,
+    previous: dict[str, SkillResult],
+) -> SkillResult:
+    video = collect_video_evidence(ctx.dataset, ctx.root, ctx.config, work_dir=skill_out)
+    report = camera_tuning_from_video(video, ctx.config)
+    evidence = _write_json(
+        skill_out / "video_camera_tuning.json",
+        {
+            "video_evidence": video,
+            "camera_tuning": report,
+        },
+    )
+    return SkillResult(
+        skill_id=manifest.skill_id,
+        status=report["status"],
+        quality_score=float(report["quality_score"]),
+        confidence=float(report["confidence"]),
+        blocking_failures=[str(item) for item in report["blocking_failures"]],
+        warnings=[str(item) for item in report["warnings"]],
+        evidence_files=[evidence],
+        metrics=dict(report["metrics"]),
+    )
+
+
 def _impl_sysid_step_response(
     manifest: SkillManifest,
     ctx: HarnessContext,
@@ -881,6 +916,33 @@ def _impl_sysid_step_response(
             "delay_steps": gap["delay"]["delay_steps"],
             "deadband_command_norm": gap["deadband_stiction_proxy"]["deadband_command_norm"],
         },
+    )
+
+
+def _impl_video_contact_friction(
+    manifest: SkillManifest,
+    ctx: HarnessContext,
+    skill_out: Path,
+    previous: dict[str, SkillResult],
+) -> SkillResult:
+    video = collect_video_evidence(ctx.dataset, ctx.root, ctx.config, work_dir=skill_out)
+    report = friction_tuning_from_video(video, ctx.config)
+    evidence = _write_json(
+        skill_out / "video_contact_friction.json",
+        {
+            "video_evidence": video,
+            "friction_tuning": report,
+        },
+    )
+    return SkillResult(
+        skill_id=manifest.skill_id,
+        status=report["status"],
+        quality_score=float(report["quality_score"]),
+        confidence=float(report["confidence"]),
+        blocking_failures=[str(item) for item in report["blocking_failures"]],
+        warnings=[str(item) for item in report["warnings"]],
+        evidence_files=[evidence],
+        metrics=dict(report["metrics"]),
     )
 
 
@@ -1175,6 +1237,9 @@ def _impl_domain_randomization_update(
 ) -> SkillResult:
     gap = estimate_gap(load_records(ctx.dataset), ctx.config)
     dr = gap["recommendations"]["domain_randomization"]
+    video_friction = previous.get("video_contact_friction")
+    video_friction_metrics = video_friction.metrics if video_friction and video_friction.status == "pass" else None
+    dr = apply_video_friction_to_domain_randomization(dr, video_friction_metrics)
     failures = []
     pos_range = dr.get("object_pose_observation_noise", dr["shaft_pose_observation_noise"]).get("object_position_uniform_m", dr["shaft_pose_observation_noise"]["gear_shaft_pos_uniform_m"])
     if max(abs(float(v)) for v in pos_range) > 0.01:
@@ -1183,6 +1248,10 @@ def _impl_domain_randomization_update(
     if friction[0] <= 0 or friction[1] > 1.5:
         failures.append("friction sweep moved outside conservative bounds")
     evidence = _write_json(skill_out / "domain_randomization_candidate.json", dr)
+    metrics = {"object_pos_noise": pos_range, "friction_sweep": friction}
+    if video_friction_metrics:
+        metrics["video_friction_applied"] = True
+        metrics["video_friction"] = video_friction_metrics.get("suggested_sim_params", {})
     return SkillResult(
         skill_id=manifest.skill_id,
         status="fail" if failures else "pass",
@@ -1190,7 +1259,7 @@ def _impl_domain_randomization_update(
         confidence=0.75,
         blocking_failures=failures,
         evidence_files=[evidence],
-        metrics={"object_pos_noise": pos_range, "friction_sweep": friction},
+        metrics=metrics,
     )
 
 
@@ -1451,6 +1520,8 @@ def _impl_release_candidate_gate(
     requirement_checks = {
         "release_profile": release_profile(ctx.config),
         "physics_sysid": "not_required",
+        "camera_video_evidence": "not_required",
+        "contact_friction_video": "not_required",
         "heldout_session": "not_required",
         "isaaclab_rollout": "not_required",
         "policy_artifacts": "not_required",
@@ -1473,6 +1544,28 @@ def _impl_release_candidate_gate(
         else:
             requirement_checks["physics_sysid"] = "fail"
             failures.append("release-candidate profile requires Newton or PACE SysID evidence, or an explicit SysID waiver")
+
+    if bool(ctx.config.release.get("require_camera_video_for_human_review", False)):
+        camera_video = flat_previous.get("video_camera_tuning")
+        waiver = release_waiver(ctx.config, "allow_camera_video_waiver", "camera_video_waiver_reason")
+        if camera_video and camera_video.status == "pass":
+            requirement_checks["camera_video_evidence"] = "pass"
+        elif waiver["allowed"]:
+            requirement_checks["camera_video_evidence"] = f"waived: {waiver['reason']}"
+        else:
+            requirement_checks["camera_video_evidence"] = "fail"
+            failures.append("release profile requires uploaded camera video analysis for camera parameter tuning")
+
+    if bool(ctx.config.release.get("require_contact_video_for_human_review", False)):
+        friction_video = flat_previous.get("video_contact_friction")
+        waiver = release_waiver(ctx.config, "allow_contact_video_waiver", "contact_video_waiver_reason")
+        if friction_video and friction_video.status == "pass":
+            requirement_checks["contact_friction_video"] = "pass"
+        elif waiver["allowed"]:
+            requirement_checks["contact_friction_video"] = f"waived: {waiver['reason']}"
+        else:
+            requirement_checks["contact_friction_video"] = "fail"
+            failures.append("release profile requires uploaded contact/friction video analysis for object and gripper friction tuning")
 
     if release_requires(ctx.config, "require_heldout_session_for_human_review"):
         data_gate = flat_previous.get("real_data_quality_gate")
@@ -1723,6 +1816,7 @@ def _impl_real_data_evidence_gate(
     for skill_id, implementation, human_required in [
         ("real_data_quality_gate", "real_data_quality_gate", False),
         ("pose_repeatability", "pose_repeatability", True),
+        ("video_camera_tuning", "video_camera_tuning", True),
     ]:
         result = _run_subcheck(
             skill_id,
@@ -1730,6 +1824,7 @@ def _impl_real_data_evidence_gate(
             ctx,
             skill_out,
             local_previous,
+            release_blocking=skill_id != "video_camera_tuning",
             human_required=human_required,
         )
         subchecks[skill_id] = result
@@ -1744,6 +1839,7 @@ def _impl_real_data_evidence_gate(
         metrics={
             **data_quality.metrics,
             "pose_repeatability": pose.metrics,
+            "video_camera_tuning": subchecks["video_camera_tuning"].metrics,
         },
     )
 
@@ -1758,6 +1854,7 @@ def _impl_physics_sysid(
     local_previous = _flatten_previous_results(previous)
     for skill_id, implementation, release_blocking, human_required in [
         ("sysid_step_response", "sysid_step_response", True, True),
+        ("video_contact_friction", "video_contact_friction", False, True),
         ("newton_sysid", "newton_sysid", False, False),
         ("pace_sysid", "pace_sysid", False, False),
     ]:
@@ -1790,6 +1887,8 @@ def _impl_physics_sysid(
         metrics={
             **local.metrics,
             "local_log_estimator": "used",
+            "video_contact_friction": subchecks["video_contact_friction"].status,
+            "video_contact_friction_metrics": subchecks["video_contact_friction"].metrics,
             "newton_sysid": newton.status,
             "pace_sysid": pace.status,
             "physics_backend_passed": backend_passed,
@@ -1838,6 +1937,8 @@ def _impl_agentic_tuning_plan(
         metrics={
             "object_pos_noise": dr.metrics.get("object_pos_noise"),
             "friction_sweep": dr.metrics.get("friction_sweep"),
+            "video_friction_applied": dr.metrics.get("video_friction_applied", False),
+            "video_friction": dr.metrics.get("video_friction", {}),
             "candidates": action.metrics.get("candidates"),
             "suggested": action.metrics.get("suggested"),
             "experiment_count": plan.metrics.get("experiment_count"),
@@ -1911,7 +2012,9 @@ INTERNAL_IMPLEMENTATIONS: dict[str, Callable[[SkillManifest, HarnessContext, Pat
     "ros_preflight": _impl_ros_preflight,
     "real_data_quality_gate": _impl_real_data_quality_gate,
     "pose_repeatability": _impl_pose_repeatability,
+    "video_camera_tuning": _impl_video_camera_tuning,
     "sysid_step_response": _impl_sysid_step_response,
+    "video_contact_friction": _impl_video_contact_friction,
     "newton_sysid": _impl_newton_sysid,
     "pace_sysid": _impl_pace_sysid,
     "domain_randomization_update": _impl_domain_randomization_update,
@@ -1934,7 +2037,9 @@ IMPLEMENTATIONS: dict[str, Callable[[SkillManifest, HarnessContext, Path, dict[s
     "ros_preflight": _impl_ros_preflight,
     "real_data_quality_gate": _impl_real_data_quality_gate,
     "pose_repeatability": _impl_pose_repeatability,
+    "video_camera_tuning": _impl_video_camera_tuning,
     "sysid_step_response": _impl_sysid_step_response,
+    "video_contact_friction": _impl_video_contact_friction,
     "newton_sysid": _impl_newton_sysid,
     "pace_sysid": _impl_pace_sysid,
     "domain_randomization_update": _impl_domain_randomization_update,

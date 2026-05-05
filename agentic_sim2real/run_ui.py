@@ -52,7 +52,7 @@ NONDETERMINISTIC_COVERAGE = [
         "covered_by": "agentic_tuning_plan",
         "is_atomic_skill": False,
         "skill_ids": ["agentic_tuning_plan/subchecks/domain_randomization_update", "agentic_tuning_plan/subchecks/action_scale_sweep"],
-        "validation": "Candidate ranges are bounded by safety caps, pose gates, friction bounds, and contact limits.",
+        "validation": "Candidate ranges are bounded by safety caps, pose gates, video friction bounds, and contact limits.",
     },
     {
         "responsibility": "Critic challenge",
@@ -545,7 +545,7 @@ def _quality_rationale(
     if skill_id == "real_data_evidence_gate":
         return _real_data_quality_rationale(metrics, warnings)
     if skill_id == "physics_sysid":
-        return "Quality is driven by the local log-based SysID subcheck; optional Newton/PACE backend skips are recorded as developer subchecks."
+        return "Quality is driven by local log-based SysID plus video contact/friction evidence when uploaded; optional Newton/PACE backend skips are recorded as developer subchecks."
     if skill_id == "agentic_tuning_plan":
         suggested = metrics.get("suggested")
         experiments = metrics.get("experiment_count")
@@ -567,10 +567,19 @@ def _quality_rationale(
         samples = metrics.get("samples")
         p95 = metrics.get("position_error_p95_m")
         return f"Quality is 1.0 because pose repeatability passed: samples={samples}, position_error_p95_m={p95}."
+    if skill_id == "video_camera_tuning":
+        error = metrics.get("reprojection_error_px")
+        count = metrics.get("camera_video_count")
+        return f"Quality reflects uploaded camera/calibration video analysis: camera_video_count={count}, reprojection_error_px={error}."
     if skill_id == "real_data_quality_gate":
         return _real_data_quality_rationale(metrics, warnings)
     if skill_id == "sysid_step_response":
         return "Quality is 0.75 because the local log-based SysID gate passed, but it is a lightweight estimator rather than fitted Newton/PACE parameters."
+    if skill_id == "video_contact_friction":
+        count = metrics.get("friction_video_count")
+        static_mu = metrics.get("object_static_friction")
+        slip = metrics.get("slip_ratio")
+        return f"Quality reflects uploaded contact/friction video analysis: friction_video_count={count}, object_static_friction={static_mu}, slip_ratio={slip}."
     if skill_id == "domain_randomization_update":
         pos_noise = metrics.get("object_pos_noise")
         friction = metrics.get("friction_sweep")
@@ -624,6 +633,8 @@ def _confidence_rationale(
         return "Confidence is a fixed 0.8 because file presence is deterministic, but deployability still needs human/pipeline review."
     if skill_id == "ros_preflight":
         return "Confidence is a fixed 0.9 because config checks are deterministic but runtime ROS sourcing can still differ."
+    if skill_id in {"video_camera_tuning", "video_contact_friction"}:
+        return f"Confidence comes from video analysis coverage and reported analyzer confidence: confidence={confidence}."
     if skill_id in {"action_scale_sweep", "domain_randomization_update", "autoresearch_planner", "sim_eval_regression"}:
         return f"Confidence is a conservative heuristic assigned by this proposal/regression skill after bounded checks passed: confidence={confidence}."
     if skill_id == "isaaclab_rollout_regression":
@@ -692,20 +703,20 @@ def _workflow(mode: str, scoreboard: dict[str, Any], scorecard: dict[str, Any]) 
     return [
         {
             "index": 1,
-            "stage": "Real data submitted",
+            "stage": "Real data and video submitted",
             "lane": "Input",
             "owner": "Human",
             "status": "complete" if scorecard else "pending",
-            "summary": "Recorded rollouts, labels, calibration, and raw evidence enter the run.",
+            "summary": "Recorded rollouts, labels, calibration, camera videos, and contact/friction videos enter the run.",
             "artifact": "rollout_data.json",
         },
         {
             "index": 2,
-            "stage": "Characterize gaps",
+            "stage": "Watch videos and characterize gaps",
             "lane": "Agent + measurement",
             "owner": "Agent + Evaluator",
             "status": characterization_status,
-            "summary": "The orchestrator chooses known skills; the harness measures data quality, pose, SysID, and regression signals.",
+            "summary": "The harness validates video camera tuning, video friction matching, data quality, pose, SysID, and regression signals.",
             "artifact": "scorecard.characterization",
         },
         {
@@ -714,7 +725,7 @@ def _workflow(mode: str, scoreboard: dict[str, Any], scorecard: dict[str, Any]) 
             "lane": "Bounded proposals",
             "owner": "Agent proposes, Evaluator validates",
             "status": validation_status,
-            "summary": "AutoResearch, DR updates, and action-scale candidates stay inside manifest and safety gates.",
+            "summary": "AutoResearch proposes camera, friction, DR, and action-scale candidates inside manifest and safety gates.",
             "artifact": "pipeline_output.changes",
         },
         {
@@ -983,7 +994,7 @@ const workflowHtml = `
   <div class="flow-head">
     <div>
       <h2>Workflow Diagram</h2>
-      <p class="flow-subhead">The run moves from real evidence, through bounded agent proposals and deterministic validation, into release review. Hardware approval stays separate.</p>
+      <p class="flow-subhead">The run moves from real logs and uploaded videos, through bounded agent proposals and deterministic validation, into release review. Hardware approval stays separate.</p>
     </div>
     ${{pill("safe_to_autorun_robot=false", "human")}}
   </div>
@@ -992,7 +1003,7 @@ const workflowHtml = `
   </div>
   <div class="flow-footer">
     <div class="flow-note"><b>Agentic lane</b><span class="note">The LLM orders known skills and proposes candidates, but it cannot approve its own result.</span></div>
-    <div class="flow-note"><b>Evidence lane</b><span class="note">The harness writes metrics, scorecards, traces, and release blockers for every run.</span></div>
+    <div class="flow-note"><b>Evidence lane</b><span class="note">The harness writes camera tuning, friction matching, metrics, scorecards, traces, and release blockers for every run.</span></div>
     <div class="flow-note"><b>Safety lane</b><span class="note">Human review is the only path to supervised physical robot execution.</span></div>
   </div>
 </section>`;
@@ -1006,9 +1017,11 @@ const charHtml = `
     <div class="kv"><label>Delay</label><strong>${{fmt(char.actuator_latency?.delay_steps)}} steps</strong><div class="note">${{fmt(char.actuator_latency?.observability_status)}}</div></div>
     <div class="kv"><label>Deadband proxy</label><strong>${{num(char.actuator_latency?.deadband_command_norm)}}</strong></div>
     <div class="kv"><label>Pose p95 error</label><strong>${{fmt(char.camera_pose_noise?.position_error_p95_m)}} m</strong><div class="note">${{fmt(char.camera_pose_noise?.validation_source)}}</div></div>
+    <div class="kv"><label>Camera video</label><strong>${{fmt(char.camera_video_tuning?.video_count)}}</strong><div class="note">reproj ${{fmt(char.camera_video_tuning?.reprojection_error_px)}} px</div></div>
     <div class="kv"><label>Contact over limit</label><strong>${{pct(char.contact?.over_limit_ratio)}}</strong></div>
+    <div class="kv"><label>Friction video</label><strong>${{fmt(char.contact_friction_video?.video_count)}}</strong><div class="note">mu ${{fmt(char.contact_friction_video?.object_static_friction)}}</div></div>
   </div>
-  <p class="note">Used before policy training to fit actuator/friction/latency, camera pose noise, contact limits, and domain-randomization ranges.</p>
+  <p class="note">Used before policy training to fit actuator/friction/latency, camera parameters, object and gripper friction, contact limits, and domain-randomization ranges.</p>
 </section>`;
 
 const releaseHtml = `

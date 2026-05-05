@@ -88,6 +88,12 @@ DEFAULTS: dict[str, Any] = {
         "heldout_min_episodes": 1,
         "allow_heldout_waiver": False,
         "heldout_waiver_reason": "",
+        "require_camera_video_for_human_review": False,
+        "allow_camera_video_waiver": False,
+        "camera_video_waiver_reason": "",
+        "require_contact_video_for_human_review": False,
+        "allow_contact_video_waiver": False,
+        "contact_video_waiver_reason": "",
         "require_isaaclab_rollout_for_human_review": None,
         "allow_isaaclab_rollout_waiver": False,
         "isaaclab_rollout_waiver_reason": "",
@@ -105,6 +111,13 @@ DEFAULTS: dict[str, Any] = {
     },
     "ui": {
         "audience": "customer",
+    },
+    "video_evidence": {
+        "analysis_command": [],
+        "analysis_timeout_s": 600,
+        "reprojection_error_gate_px": 1.5,
+        "min_friction_confidence": 0.55,
+        "default_friction_spread": 0.15,
     },
     "sysid": {
         "sysid_backend_preference": ["newton", "pace", "local"],
@@ -159,6 +172,7 @@ class PipelineConfig:
     release: dict[str, Any] = field(default_factory=dict)
     llm_orchestrator: dict[str, Any] = field(default_factory=dict)
     ui: dict[str, Any] = field(default_factory=dict)
+    video_evidence: dict[str, Any] = field(default_factory=dict)
     sysid: dict[str, Any] = field(default_factory=dict)
     safety: dict[str, Any] = field(default_factory=dict)
 
@@ -174,6 +188,7 @@ class PipelineConfig:
             "release": self.release,
             "llm_orchestrator": self.llm_orchestrator,
             "ui": self.ui,
+            "video_evidence": self.video_evidence,
             "sysid": self.sysid,
             "safety": self.safety,
         }
@@ -217,6 +232,7 @@ def _config_from_merged(merged: dict[str, Any]) -> PipelineConfig:
         release=dict(merged["release"]),
         llm_orchestrator=dict(merged["llm_orchestrator"]),
         ui=dict(merged["ui"]),
+        video_evidence=dict(merged["video_evidence"]),
         sysid=dict(merged["sysid"]),
         safety=dict(merged["safety"]),
     )

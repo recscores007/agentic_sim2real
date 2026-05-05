@@ -1,0 +1,3 @@
+episode_index,timestamp_start,timestamp_end,video_path,video_type,view,notes
+0,0.0,4.0,video_data/camera_calibration.mp4,camera_calibration,front_rgb,checkerboard or AprilTag calibration sweep
+0,4.0,8.0,video_data/contact_friction.mp4,object_friction,wrist_rgb,object slip and contact settling segment

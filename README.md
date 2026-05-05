@@ -11,7 +11,11 @@ It is a Python CLI and lightweight framework for robotics teams that need to tur
 ```mermaid
 flowchart LR
   Data["Real robot logs<br/>or sample data"] --> Evidence["Real-data<br/>evidence gate"]
-  Evidence --> SysID["Physics<br/>SysID"]
+  Video["Uploaded RGB/depth<br/>task videos"] --> Camera["Video camera<br/>parameter tuning"]
+  Video --> Friction["Video contact/friction<br/>matching"]
+  Camera --> Evidence
+  Evidence --> SysID["Trajectory + physics<br/>SysID"]
+  Friction --> SysID
   SysID --> Plan["Agentic<br/>tuning plan"]
   Plan --> Regression["Regression<br/>evaluation"]
   Regression --> Release["Release<br/>candidate gate"]
@@ -32,8 +36,8 @@ flowchart LR
   classDef review fill:#f3e8ff,stroke:#9333ea,color:#2e1065,stroke-width:2px
   classDef robot fill:#f8fafc,stroke:#475569,color:#0f172a,stroke-width:2px,stroke-dasharray: 5 5
 
-  class Data input
-  class Evidence,SysID,Regression evidence
+  class Data,Video input
+  class Evidence,Camera,Friction,SysID,Regression evidence
   class Plan agent
   class Release,Hardware gate
   class Customer,Developer review
@@ -52,8 +56,9 @@ Customer and developer flows use the same validation pipeline. The difference is
 - Seven consolidated validation skills with explicit manifests, outputs, quality gates, and blocking failures.
 - Static customer and developer hubs generated from each run, so evidence can be reviewed without a running web service.
 - Scripted or command-backed LLM orchestration that can propose skill order and tuning plans but cannot approve release.
-- Real-data readiness checks for trajectory, timing, perception, contact, and policy artifact evidence.
-- Physics SysID support with local fallback and optional Newton or PACE integrations.
+- Real-data readiness checks for trajectory, timing, uploaded video, perception, contact, and policy artifact evidence.
+- Uploaded-video evidence hooks for camera-parameter tuning and object/gripper friction matching.
+- Physics SysID support with local fallback, video contact/friction evidence, and optional Newton or PACE integrations.
 - Release gates that keep real robot motion behind explicit human approval.
 - Custom skill overlays for replacing or extending validation behavior without rewriting the harness.
 
@@ -176,6 +181,25 @@ agentic-sim2real --config configs/ur10e_gear_assembly.example.json prepare-real-
   --out outputs/prepared_real_records.jsonl
 ```
 
+Run a customer upload session that includes videos:
+
+```bash
+./scripts/run_uploaded_session.sh /path/to/customer/session
+```
+
+Expected video evidence layout:
+
+```text
+/path/to/customer/session/
+  video_data/
+    index.csv
+    analysis.json
+    camera_calibration.mp4
+    contact_friction.mp4
+```
+
+The built-in pipeline validates the video index and analysis contract. For pixel-level video watching, set `video_evidence.analysis_command` to a command that reads `AGENTIC_SIM2REAL_VIDEO_INPUT_JSON` and writes camera/friction metrics to `AGENTIC_SIM2REAL_VIDEO_OUTPUT_JSON`.
+
 Only check the real-robot gate in a supervised hardware session:
 
 ```bash
@@ -188,9 +212,9 @@ agentic-sim2real --config configs/ur10e_gear_assembly.example.json check-real-ga
 | Skill | Purpose |
 | --- | --- |
 | `project_preflight` | Validate local environment, ROS/Isaac assumptions, task configuration, and policy artifacts. |
-| `real_data_evidence_gate` | Check real log quality, alignment, pose repeatability, and evidence completeness. |
-| `physics_sysid` | Estimate physics gaps with local checks and optional Newton/PACE backends. |
-| `agentic_tuning_plan` | Propose bounded tuning experiments from observed evidence. |
+| `real_data_evidence_gate` | Check real log quality, alignment, uploaded camera video, pose repeatability, and evidence completeness. |
+| `physics_sysid` | Estimate physics gaps from trajectories, contact logs, uploaded friction videos, and optional Newton/PACE backends. |
+| `agentic_tuning_plan` | Propose bounded camera, friction, domain-randomization, action-scale, and experiment updates from observed evidence. |
 | `regression_evaluation` | Check simulation rollout and regression evidence before release. |
 | `release_candidate_gate` | Decide whether the candidate can move to human review. |
 | `real_robot_gate` | Require explicit human approval before any hardware-facing action. |
@@ -212,6 +236,9 @@ Important fields:
 | `ui.audience` | Default generated hub audience: `customer` or `developer`. |
 | `release.profile` | Smoke or stricter release validation expectations. |
 | `llm_orchestrator.provider` | `scripted` or command-backed orchestration. |
+| `video_evidence.analysis_command` | Optional command that watches uploaded videos and writes camera/friction metrics. |
+| `video_evidence.reprojection_error_gate_px` | Gate for camera-calibration video analysis. |
+| `video_evidence.min_friction_confidence` | Minimum confidence for video-derived object/gripper friction tuning. |
 | `sysid.*` | Newton, PACE, and local SysID settings. |
 | `safety.real_robot_gate_env` | Environment variable required for hardware-facing checks. |
 

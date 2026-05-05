@@ -507,6 +507,64 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(report["metrics"]["missing_object_pose_estimate"], 0)
         self.assertIn("data_readiness", report)
 
+    def test_uploaded_video_evidence_feeds_camera_and_friction_tuning(self) -> None:
+        source = ROOT / "embodiments" / "manipulator" / "ur10e_gear_assembly" / "real_data" / "example_session"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            session = tmp_path / "session"
+            shutil.copytree(source, session)
+            video_dir = session / "video_data"
+            video_dir.mkdir()
+            (video_dir / "camera_calibration.mp4").write_bytes(b"fake camera video")
+            (video_dir / "contact_friction.mp4").write_bytes(b"fake friction video")
+            (video_dir / "index.csv").write_text(
+                "\n".join(
+                    [
+                        "episode_index,timestamp_start,timestamp_end,video_path,video_type,view,notes",
+                        "0,0.0,4.0,video_data/camera_calibration.mp4,camera_calibration,front_rgb,calibration board",
+                        "0,4.0,8.0,video_data/contact_friction.mp4,object_friction,wrist_rgb,object slip",
+                    ]
+                )
+                + "\n"
+            )
+            (video_dir / "analysis.json").write_text(
+                json.dumps(
+                    {
+                        "camera_calibration": {
+                            "confidence": 0.82,
+                            "observed_target_count": 30,
+                            "reprojection_error_px": 0.7,
+                            "suggested_intrinsics": {"fx": 912.0, "fy": 913.0, "cx": 640.0, "cy": 360.0},
+                        },
+                        "contact_friction": {
+                            "confidence": 0.76,
+                            "object_static_friction": 0.84,
+                            "object_dynamic_friction": 0.69,
+                            "gripper_pad_static_friction": 1.12,
+                            "gripper_pad_dynamic_friction": 0.96,
+                            "slip_ratio": 0.03,
+                        },
+                    }
+                )
+                + "\n"
+            )
+
+            scoreboard = run_harness(
+                root=ROOT,
+                config_path=ROOT / "configs" / "ur10e_gear_assembly.example.json",
+                dataset_path=session,
+                out_dir=tmp_path / "out",
+            )
+            self.assertEqual(scoreboard["subchecks"]["video_camera_tuning"]["status"], "pass")
+            self.assertEqual(scoreboard["subchecks"]["video_contact_friction"]["status"], "pass")
+            self.assertEqual(
+                scoreboard["subchecks"]["video_camera_tuning"]["metrics"]["suggested_camera_parameters"]["intrinsics"]["fx"],
+                912.0,
+            )
+            self.assertTrue(scoreboard["subchecks"]["domain_randomization_update"]["metrics"]["video_friction_applied"])
+            friction = scoreboard["subchecks"]["domain_randomization_update"]["metrics"]["video_friction"]
+            self.assertEqual(friction["object_material"]["static_friction"], 0.84)
+
     def test_golden_data_readiness_stress_fixture_detects_expected_alerts(self) -> None:
         cfg = load_config(ROOT / "configs" / "ur10e_gear_assembly.example.json")
         dataset = ROOT / "golden" / "real_datasets" / "data_readiness_stress"

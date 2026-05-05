@@ -2,13 +2,14 @@
   "id": "physics_sysid",
   "name": "Physics SysID",
   "owner_agent": "sysid_agent",
-  "description": "Estimate actuator, latency, contact, and optional physics-backend evidence from canonical real logs.",
+  "description": "Estimate actuator, latency, contact, uploaded video friction evidence, and optional physics-backend evidence from canonical real logs.",
   "implementation": "physics_sysid",
   "depends_on": ["real_data_evidence_gate"],
-  "inputs": ["aligned_records", "config.sysid", "config.robot"],
-  "outputs": ["physics_sysid.json", "subchecks/*/result.json", "result.json"],
+  "inputs": ["aligned_records", "uploaded_videos", "config.sysid", "config.robot", "config.video_evidence"],
+  "outputs": ["physics_sysid.json", "subchecks/*/result.json", "subchecks/video_contact_friction/video_contact_friction.json", "result.json"],
   "validators": [
     "local log-based SysID must emit delay, deadband, and contact summaries",
+    "uploaded contact, object, and gripper videos should emit friction and slip evidence when configured",
     "Newton and PACE backend adapters must consume canonical aligned records when enabled",
     "missing optional backend evidence must be recorded without blocking smoke runs",
     "required Newton or PACE evidence must fail when configured as mandatory"

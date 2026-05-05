@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .adapters import load_embodiment_adapter
+from .video_evidence import collect_video_evidence
 
 
 def inspect_real_session(
@@ -25,6 +26,8 @@ def inspect_real_session(
         "pose": selected_pose is not None,
         "contact": (session / "contact_data" / "contact.csv").exists(),
         "camera_index": (session / "camera_data" / "index.csv").exists(),
+        "video_index": (session / "video_data" / "index.csv").exists(),
+        "video_analysis": (session / "video_data" / "analysis.json").exists(),
         "calibration": (session / "calibration" / "calibration.json").exists(),
     }
     raw_sources = {
@@ -32,6 +35,7 @@ def inspect_real_session(
         "aligned_records": bool(files["aligned_records"]),
         "rosbag2": _has_rosbag2_source(session),
         "image_sequence": _has_image_sequence(session),
+        "uploaded_video": _has_video_source(session),
     }
     blockers = []
     if not raw_sources["aligned_records"] and not raw_sources["csv_session"]:
@@ -63,6 +67,8 @@ def inspect_real_session(
             "calibration_present": bool(files["calibration"]),
             "camera_index_present": bool(files["camera_index"]),
             "contact_present": bool(files["contact"]),
+            "video_index_present": bool(files["video_index"]),
+            "video_analysis_present": bool(files["video_analysis"]),
         },
         "blockers": blockers,
     }
@@ -172,6 +178,10 @@ def prepare_real_session(
                 "color_image": camera_row.get("color_image", ""),
                 "depth_image": camera_row.get("depth_image", ""),
             }
+            if camera_row.get("video_path"):
+                camera_fields["video_path"] = camera_row.get("video_path", "")
+            if camera_row.get("frame_index"):
+                camera_fields["frame_index"] = camera_row.get("frame_index", "")
 
         joint_command = _first_optional_vector_from_prefix(
             joint_row,
@@ -199,6 +209,7 @@ def prepare_real_session(
             "failure_mode": _clean_failure_mode(label.get("failure_mode")),
             "notes": label.get("notes"),
             "camera": camera_fields,
+            "source_session_dir": _display_path(session),
         }
         if joint_command:
             record["joint_command"] = joint_command
@@ -392,3 +403,15 @@ def _has_image_sequence(session: Path) -> bool:
         for path in camera_dir.rglob("*")
         if path.is_file() and not path.name.startswith(".")
     )
+
+
+def _has_video_source(session: Path) -> bool:
+    evidence = collect_video_evidence(session, root=session.parent, config=_minimal_video_config())
+    return bool(evidence.get("video_count") or evidence.get("indexed_video_count") or evidence.get("analysis_files"))
+
+
+def _minimal_video_config() -> Any:
+    class _Config:
+        video_evidence = {"analysis_command": []}
+
+    return _Config()

@@ -2,10 +2,14 @@
   "release": {
     "profile": "production_upload",
     "require_physics_sysid_for_human_review": true,
+    "require_camera_video_for_human_review": true,
+    "require_contact_video_for_human_review": true,
     "require_heldout_session_for_human_review": true,
     "require_isaaclab_rollout_for_human_review": true,
     "require_user_policy_artifacts_for_human_review": true,
     "allow_sysid_waiver": false,
+    "allow_camera_video_waiver": false,
+    "allow_contact_video_waiver": false,
     "allow_heldout_waiver": false,
     "allow_isaaclab_rollout_waiver": false
   },
@@ -30,6 +34,13 @@
     "pace_root": "/abs/path/to/pace-sim2real",
     "pace_task": "ur10e_gear_assembly",
     "pace_data_dir": "/abs/path/to/pace/data"
+  },
+  "video_evidence": {
+    "analysis_command": [],
+    "analysis_timeout_s": 600,
+    "reprojection_error_gate_px": 1.5,
+    "min_friction_confidence": 0.55,
+    "default_friction_spread": 0.15
   },
   "ui": {
     "audience": "customer"

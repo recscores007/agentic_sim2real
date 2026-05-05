@@ -16,7 +16,8 @@
       "aligned_records",
       "csv_session",
       "rosbag2",
-      "image_sequence"
+      "image_sequence",
+      "uploaded_video"
     ],
     "aligned_records": "real_data/example_session/aligned/records.jsonl",
     "canonical_pose_file": "object_pose.csv",
