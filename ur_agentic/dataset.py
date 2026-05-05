@@ -26,14 +26,22 @@ class Record:
 def load_records(path: str | Path) -> list[Record]:
     source = Path(path).expanduser()
     if source.is_dir():
-        rows: list[dict[str, Any]] = []
-        for child in sorted(source.rglob("*")):
-            if child.suffix == ".jsonl":
-                rows.extend(_load_jsonl(child))
-            elif child.suffix == ".json":
-                rows.extend(_load_json(child))
-            elif child.suffix == ".csv":
-                rows.extend(_load_csv(child))
+        preferred = [
+            source / "aligned" / "records.jsonl",
+            source / "records.jsonl",
+        ]
+        existing = [candidate for candidate in preferred if candidate.exists()]
+        if existing:
+            rows = _load_jsonl(existing[0])
+        else:
+            rows: list[dict[str, Any]] = []
+            for child in sorted(source.rglob("*")):
+                if child.suffix == ".jsonl":
+                    rows.extend(_load_jsonl(child))
+                elif child.suffix == ".json":
+                    rows.extend(_load_json(child))
+                elif child.suffix == ".csv":
+                    rows.extend(_load_csv(child))
     elif source.suffix == ".jsonl":
         rows = _load_jsonl(source)
     elif source.suffix == ".json":

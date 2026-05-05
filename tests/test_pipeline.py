@@ -9,6 +9,7 @@ from ur_agentic.cli import main
 from ur_agentic.config import choose_task, load_config, nominal_action_scale
 from ur_agentic.dataset import load_records
 from ur_agentic.evaluation_loop import run_evaluation_loop
+from ur_agentic.real_data import prepare_real_session
 from ur_agentic.skill_harness import run_harness, validate_all_manifests
 from ur_agentic.sysid import estimate_gap
 
@@ -91,6 +92,17 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("human_approves_hardware", trace)
             self.assertFalse(trace["release_gate_decides"]["safe_to_autorun_robot"])
             self.assertTrue((Path(tmp) / "evaluation_trace.md").exists())
+
+    def test_prepare_real_data_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "records.jsonl"
+            summary = prepare_real_session(ROOT / "real_data" / "example_session", out_path=out)
+            self.assertEqual(summary["records"], 12)
+            self.assertTrue(out.exists())
+            records = load_records(out)
+            self.assertEqual(len(records), 12)
+            self.assertEqual(len(records[0].action), 6)
+            self.assertGreater(len(records[0].shaft_pose_estimate), 0)
 
 
 if __name__ == "__main__":

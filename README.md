@@ -67,6 +67,7 @@ ur_agentic/
   cli.py                        Command-line entrypoint
 
 scripts/
+  prepare_real_data.sh          Convert raw real_data session to records.jsonl
   run_skill_harness.sh          Default validation harness
   run_evaluation_loop.sh        Five-stage evaluation trace
   run_autoresearch_loop.sh      Harness plus AutoResearch evidence path
@@ -75,6 +76,7 @@ scripts/
   real_robot_human_gate.sh      Human-gated action sender
 
 golden/sample_inputs/           Golden validation fixtures
+real_data/                      Real-data templates and example session
 sample_data/real_log_demo.jsonl Sample real-log schema
 agents/README.md                Agent responsibilities
 harness/README.md               Harness design
@@ -203,6 +205,68 @@ Thresholds live in `harness/threshold_policy.json`:
 Agents may propose new parameters, but the evaluator and release gate own
 pass/fail.
 
+## Real Data Folder
+
+Put real robot data under `real_data/<session_name>/`.
+
+```text
+real_data/<session_name>/
+  camera_data/
+    index.csv
+    color/
+    depth/
+  joint_data/
+    joint_states.csv
+  pose_data/
+    shaft_pose.csv
+  contact_data/
+    contact.csv
+  episode_labels/
+    labels.csv
+  calibration/
+    calibration.json
+  aligned/
+    records.jsonl
+```
+
+Use the template:
+
+```bash
+cp -R real_data/templates real_data/ur10e_day1
+```
+
+Fill in:
+
+- `joint_data/joint_states.csv`: policy actions, joint positions, joint velocities, optional end-effector pose
+- `pose_data/shaft_pose.csv`: FoundationPose/RealSense shaft pose estimate and reference pose if available
+- `camera_data/index.csv`: color/depth image paths or frame provenance
+- `contact_data/contact.csv`: force or force-proxy samples
+- `episode_labels/labels.csv`: success, failure mode, notes
+- `calibration/calibration.json`: UR calibration, camera frames, hand-eye metadata
+
+Convert raw subfolders into the pipeline format:
+
+```bash
+./scripts/prepare_real_data.sh real_data/ur10e_day1
+```
+
+This writes:
+
+```text
+real_data/ur10e_day1/aligned/records.jsonl
+real_data/ur10e_day1/aligned/prepare_summary.json
+```
+
+Then run the pipeline directly on the session folder:
+
+```bash
+DATASET=real_data/ur10e_day1 ./scripts/run_skill_harness.sh
+DATASET=real_data/ur10e_day1 ./scripts/run_evaluation_loop.sh
+```
+
+The loader automatically uses `aligned/records.jsonl` when a session directory
+is passed as `--dataset`.
+
 ## Step By Step: Local Skill Harness
 
 ### 1. Clone and install
@@ -316,6 +380,15 @@ cat outputs/evaluation_demo/evaluation_trace.md
 
 This is the easiest way to see the full proposal -> measurement -> critique ->
 decision -> human gate chain.
+
+### 9. Prepare a real-data session
+
+```bash
+cp -R real_data/templates real_data/ur10e_day1
+# Fill the CSV files and calibration.json with real session data.
+./scripts/prepare_real_data.sh real_data/ur10e_day1
+DATASET=real_data/ur10e_day1 ./scripts/run_evaluation_loop.sh
+```
 
 ## Step By Step: Tutorial Training
 

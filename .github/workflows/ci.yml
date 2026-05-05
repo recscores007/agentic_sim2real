@@ -16,6 +16,8 @@ jobs:
         run: python -m py_compile ur_agentic/*.py tests/test_pipeline.py
       - name: Unit tests
         run: PYTHONPATH=. python -m unittest discover -s tests
+      - name: Prepare real-data example
+        run: PYTHONPATH=. python -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json prepare-real-data --session real_data/example_session --out /tmp/ur_real_records.jsonl
       - name: Skill manifest validation
         run: PYTHONPATH=. python -m ur_agentic.cli --config configs/ur10e_gear_assembly.example.json validate-skills --root .
       - name: Skill harness golden run

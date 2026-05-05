@@ -1,0 +1,2 @@
+episode_index,timestamp,estimate_x,estimate_y,estimate_z,estimate_qx,estimate_qy,estimate_qz,estimate_qw,reference_x,reference_y,reference_z,reference_qx,reference_qy,reference_qz,reference_qw
+0,0.000,0.502,0.104,0.221,0.000,0.000,0.012,0.9999,0.500,0.100,0.220,0.000,0.000,0.000,1.000

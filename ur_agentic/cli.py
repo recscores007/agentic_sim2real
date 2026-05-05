@@ -10,6 +10,7 @@ from .autoresearch import build_plan
 from .config import PipelineConfig, choose_task, command_env, load_config
 from .dataset import load_records
 from .evaluation_loop import run_evaluation_loop
+from .real_data import prepare_real_session
 from .report import write_outputs
 from .safety import require_real_robot_gate
 from .skill_harness import load_manifests, run_harness, validate_all_manifests
@@ -31,6 +32,11 @@ def main(argv: list[str] | None = None) -> int:
     analyze = sub.add_parser("analyze", help="Analyze recorded real logs offline")
     analyze.add_argument("--dataset", required=True)
     analyze.add_argument("--out", required=True)
+
+    prepare = sub.add_parser("prepare-real-data", help="Merge a real_data session into pipeline records.jsonl")
+    prepare.add_argument("--session", required=True)
+    prepare.add_argument("--out", default=None)
+    prepare.add_argument("--tolerance-s", type=float, default=0.05)
 
     harness = sub.add_parser("run-harness", help="Run the skill validation harness")
     harness.add_argument("--root", default=".")
@@ -61,6 +67,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_validate_skills(args.root)
     if args.cmd == "analyze":
         return cmd_analyze(config, args.dataset, args.out)
+    if args.cmd == "prepare-real-data":
+        return cmd_prepare_real_data(args.session, args.out, args.tolerance_s)
     if args.cmd == "run-harness":
         return cmd_run_harness(args.root, args.config, args.dataset, args.out, args.include_real, args.skill)
     if args.cmd == "run-evaluation-loop":
@@ -166,6 +174,12 @@ def cmd_run_harness(
     )
     print(json.dumps(scoreboard, indent=2, sort_keys=True))
     return 0 if scoreboard["status"] == "pass" else 1
+
+
+def cmd_prepare_real_data(session: str, out: str | None, tolerance_s: float) -> int:
+    summary = prepare_real_session(session, out_path=out, tolerance_s=tolerance_s)
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
 
 
 def cmd_run_evaluation_loop(
