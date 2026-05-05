@@ -11,7 +11,8 @@
     "aligned records must include consistent action and joint dimensions",
     "minimum configured episode count must be present",
     "object pose estimate and reference fields must be populated",
-    "embodiment-scoped sessions must include calibration metadata"
+    "embodiment-scoped sessions must include calibration metadata",
+    "frame coverage, heldout frame coverage, label provenance, pose provenance, orphan frames, and delay sampling must be reported as data-readiness alerts"
   ],
   "quality_gate": {"min_score": 0.7},
   "human_required": false,

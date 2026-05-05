@@ -123,6 +123,8 @@ def write_pipeline_ui(
         "pipeline_input": pipeline_input,
         "rollout_summary": _rollout_summary(rollout_data),
         "scorecard": scorecard,
+        "data_readiness": scorecard.get("data_readiness", {}),
+        "split_scores": scorecard.get("split_scores", {}),
         "pipeline_output": pipeline_output,
         "run_record": run_record,
         "scoreboard": _scoreboard_summary(scoreboard),
@@ -596,6 +598,7 @@ def _confidence_rationale(
 
 
 def _real_data_quality_rationale(metrics: dict[str, Any], warnings: list[str]) -> str:
+    readiness = dict(metrics.get("data_readiness", {}))
     parts = [
         "Quality starts at 1.0.",
         f"records={metrics.get('records')}",
@@ -604,6 +607,14 @@ def _real_data_quality_rationale(metrics: dict[str, Any], warnings: list[str]) -
         f"success_label_coverage={metrics.get('success_label_coverage')}",
         f"joint_velocity_coverage={metrics.get('joint_velocity_coverage')}",
     ]
+    if readiness:
+        parts.extend(
+            [
+                f"frame_link_coverage={readiness.get('frame_link_coverage')}",
+                f"delay_observability={readiness.get('delay_observability_status')}",
+                f"pose_validation={readiness.get('pose_validation', {}).get('validation_source')}",
+            ]
+        )
     if warnings:
         parts.append(f"warnings={len(warnings)} reduce the score.")
     return " ".join(parts)
@@ -786,6 +797,8 @@ const rollout = state.rollout_summary || {{}};
 const board = state.scoreboard || {{}};
 const char = state.characterization || {{}};
 const policy = state.policy_release || {{}};
+const readiness = state.data_readiness || {{}};
+const splitScores = state.split_scores || {{}};
 const gap = score.release_gap_score ?? score.sim2real_gap;
 document.getElementById("header-pills").innerHTML = [
   pill(state.mode),
@@ -801,7 +814,7 @@ const metricHtml = `
   <div class="metrics">
     <div class="metric"><span>Transfer readiness</span><b>${{num(score.transfer_readiness_score)}}</b><div class="note">higher is better</div></div>
     <div class="metric"><span>Release gap score</span><b>${{num(gap)}}</b><div class="note">target ${{fmt(score.release_gap_target ?? input.goal?.release_gap_target)}} from config</div></div>
-    <div class="metric"><span>Real data</span><b>${{fmt(rollout.rollout_count)}} rollouts</b><div class="note">${{fmt(rollout.streams?.join(", "))}}</div></div>
+    <div class="metric"><span>Real data</span><b>${{fmt(rollout.rollout_count)}} rollouts</b><div class="note">frames ${{pct(readiness.frame_link_coverage)}}; heldout ${{pct(readiness.heldout_frame_link_coverage)}}</div></div>
     <div class="metric"><span>Run version</span><b>${{fmt(state.run.version)}}</b><div class="note">versioned audit record</div></div>
   </div>
 </section>`;
@@ -816,6 +829,27 @@ const actionHtml = `
 <section class="panel wide">
   <h2>Recommended Actions</h2>
   <div class="action-grid">${{actionCards || "<span class='note'>No immediate action. Keep evidence with the run record.</span>"}}</div>
+</section>`;
+
+const readinessCards = (readiness.action_items || []).map(item => `<div class="action-card">
+  <div>${{pill(item.owner || "Pipeline")}} ${{pill(item.severity || "warning")}}</div>
+  <b>${{fmt(item.message)}}</b>
+  <div class="note"><b>Impact:</b> ${{fmt(item.impact)}}<br><b>Fix:</b> ${{fmt(item.recommended_fix)}}</div>
+</div>`).join("");
+
+const readinessHtml = `
+<section class="panel wide">
+  <h2>Data Readiness</h2>
+  <div class="subgrid">
+    <div class="kv"><label>Status</label><strong>${{fmt(readiness.status)}}</strong></div>
+    <div class="kv"><label>Frame links</label><strong>${{pct(readiness.frame_link_coverage)}}</strong></div>
+    <div class="kv"><label>Heldout frame links</label><strong>${{pct(readiness.heldout_frame_link_coverage)}}</strong></div>
+    <div class="kv"><label>Orphan frames</label><strong>${{fmt(readiness.orphan_frame_count)}}</strong></div>
+    <div class="kv"><label>Delay observability</label><strong>${{fmt(readiness.delay_observability_status)}}</strong></div>
+    <div class="kv"><label>Pose source</label><strong>${{fmt(readiness.pose_validation?.validation_source)}}</strong></div>
+  </div>
+  <h3 style="margin-top:14px">Early Data Alerts</h3>
+  <div class="action-grid">${{readinessCards || "<span class='note'>No data-readiness alerts for this run.</span>"}}</div>
 </section>`;
 
 const workflowHtml = `
@@ -837,9 +871,9 @@ const charHtml = `
   <div class="subgrid">
     <div class="kv"><label>Trajectory records</label><strong>${{fmt(char.trajectory_data?.records)}}</strong></div>
     <div class="kv"><label>Estimated rate</label><strong>${{fmt(char.trajectory_data?.estimated_rate_hz)}} Hz</strong></div>
-    <div class="kv"><label>Delay</label><strong>${{fmt(char.actuator_latency?.delay_steps)}} steps</strong></div>
+    <div class="kv"><label>Delay</label><strong>${{fmt(char.actuator_latency?.delay_steps)}} steps</strong><div class="note">${{fmt(char.actuator_latency?.observability_status)}}</div></div>
     <div class="kv"><label>Deadband proxy</label><strong>${{num(char.actuator_latency?.deadband_command_norm)}}</strong></div>
-    <div class="kv"><label>Pose p95 error</label><strong>${{fmt(char.camera_pose_noise?.position_error_p95_m)}} m</strong></div>
+    <div class="kv"><label>Pose p95 error</label><strong>${{fmt(char.camera_pose_noise?.position_error_p95_m)}} m</strong><div class="note">${{fmt(char.camera_pose_noise?.validation_source)}}</div></div>
     <div class="kv"><label>Contact over limit</label><strong>${{pct(char.contact?.over_limit_ratio)}}</strong></div>
   </div>
   <p class="note">Used before policy training to fit actuator/friction/latency, camera pose noise, contact limits, and domain-randomization ranges.</p>
@@ -871,6 +905,17 @@ const recordHtml = `
     <div class="kv"><label>Retraining requested</label><strong>${{fmt(lineage.retraining?.requested)}}</strong></div>
   </div>
   <p class="note"><code>run_record.json</code> links this run version to the exact real-data manifest, policy checkpoint, score breakdowns, skill evidence, and release gates.</p>
+</section>`;
+
+const splitHtml = `
+<section class="panel wide">
+  <h2>Train vs Heldout Score</h2>
+  <div class="subgrid">
+    <div class="kv"><label>Train transfer readiness</label><strong>${{num(splitScores.train?.transfer_readiness_score)}}</strong><div class="note">${{fmt(splitScores.train?.records)}} records</div></div>
+    <div class="kv"><label>Heldout transfer readiness</label><strong>${{num(splitScores.heldout?.transfer_readiness_score)}}</strong><div class="note">${{fmt(splitScores.heldout?.records)}} records</div></div>
+    <div class="kv"><label>Heldout - train</label><strong>${{num(splitScores.heldout_vs_train_delta)}}</strong></div>
+    <div class="kv"><label>Score policy</label><strong>${{fmt(score.transfer_readiness_breakdown?.formula)}}</strong></div>
+  </div>
 </section>`;
 
 const coverageRows = (board.nondeterministic_coverage || []).map(row => `<tr>
@@ -927,8 +972,10 @@ const journal = (state.journal || []).slice(-9).map(row => `<div class="journal-
 document.getElementById("app").innerHTML = [
   metricHtml,
   actionHtml,
+  readinessHtml,
   workflowHtml,
   `<div class="lane-grid">${{charHtml}}${{releaseHtml}}</div>`,
+  splitHtml,
   recordHtml,
   nondetHtml,
   deterministicHtml,

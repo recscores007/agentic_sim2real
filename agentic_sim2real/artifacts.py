@@ -11,6 +11,7 @@ from typing import Any
 
 from .autoresearch import build_plan
 from .config import PipelineConfig, choose_task
+from .data_quality import evaluate_data_readiness
 from .dataset import Record, load_records
 from .metrics import summarize_records
 from .sysid import estimate_gap
@@ -263,6 +264,7 @@ def build_real_data_manifest(
     source = Path(dataset_path).expanduser()
     canonical = _canonical_records_path(source)
     rollout_data = build_rollout_data(dataset_path, config, records)
+    data_readiness = evaluate_data_readiness(records, config, dataset_path=source)
     return {
         "schema": f"{SCHEMA_VERSION}.real_data_manifest",
         "description": "Complete file-and-hash manifest for the real data fed to this sim2real run.",
@@ -280,6 +282,7 @@ def build_real_data_manifest(
             "required_fields": ["episode_index", "timestamp", "action", "joint_state"],
             "optional_fields": ["joint_velocity", "ee_pose", "object_pose_estimate", "object_pose_reference", "contact_force", "success", "failure_mode"],
         },
+        "data_readiness": data_readiness,
         "files": _file_manifest(source),
         "rollouts": [
             {
@@ -351,6 +354,8 @@ def build_run_record(
         "score_breakdown": {
             "transfer_readiness": scorecard.get("transfer_readiness_breakdown", {}),
             "release_gap": scorecard.get("release_gap_breakdown", {}),
+            "split_scores": scorecard.get("split_scores", {}),
+            "data_readiness": scorecard.get("data_readiness", {}),
             "characterization": scorecard.get("characterization", {}),
             "policy_release": scorecard.get("policy_release", {}),
         },
@@ -496,6 +501,8 @@ def build_scorecard(
     gap = estimate_gap(records, config)
     plan = build_plan(gap, config)
     summary = gap["summary"]
+    data_readiness = evaluate_data_readiness(records, config, dataset_path=dataset_path)
+    split_scores = _split_transfer_scores(records, config)
     transfer_score = float(plan["transfer_score"]["score_0_to_1"])
     release_gap_score = round(max(0.0, 1.0 - transfer_score), 3)
     previous_gap = _previous_gap(previous_scorecard)
@@ -526,8 +533,11 @@ def build_scorecard(
             "release_gap_score": "Normalized remaining readiness gap, computed as max(0, 1 - transfer_readiness_score). Lower is better.",
             "sim2real_gap": "Backward-compatible alias for release_gap_score, not a physical distance or standard industry metric.",
             "target_source": "Configured by the user or release policy via task_spec.goal.release_gap_target, task_spec.goal.gap_target, or agent.gap_target.",
-            "formula": "transfer_readiness_score = 0.20*episode_score + 0.20*success_component + 0.15*delay_confidence + 0.15*deadband_confidence + 0.15*pose_score + 0.15*contact_score; release_gap_score = max(0, 1 - transfer_readiness_score)",
+            "formula": plan["transfer_score"].get("score_policy", {}).get("formula", "weighted average of included evidence components")
+            + "; release_gap_score = max(0, 1 - transfer_readiness_score)",
         },
+        "data_readiness": data_readiness,
+        "split_scores": split_scores,
         "success_rate": {"sim": sim_success, "real": real_success},
         "regression_pp": regression_pp,
         "per_skill": per_skill,
@@ -689,6 +699,21 @@ def render_scorecard_markdown(payload: dict[str, Any]) -> str:
         f"- Success rate: sim={payload['success_rate']['sim']} real={payload['success_rate']['real']}",
         f"- Regression: {payload['regression_pp']} pp",
         f"- Recommended next skill: {payload['recommended_skill']}",
+        "",
+        "## Data Readiness",
+        "",
+        f"- Status: {payload.get('data_readiness', {}).get('status')}",
+        f"- Frame link coverage: {payload.get('data_readiness', {}).get('frame_link_coverage')}",
+        f"- Heldout frame link coverage: {payload.get('data_readiness', {}).get('heldout_frame_link_coverage')}",
+        f"- Delay observability: {payload.get('data_readiness', {}).get('delay_observability_status')}",
+        f"- Pose validation source: {payload.get('data_readiness', {}).get('pose_validation', {}).get('validation_source')}",
+        f"- Action items: {len(payload.get('data_readiness', {}).get('action_items', []))}",
+        "",
+        "## Split Scores",
+        "",
+        f"- Train transfer readiness: {payload.get('split_scores', {}).get('train', {}).get('transfer_readiness_score')}",
+        f"- Heldout transfer readiness: {payload.get('split_scores', {}).get('heldout', {}).get('transfer_readiness_score')}",
+        f"- Heldout minus train: {payload.get('split_scores', {}).get('heldout_vs_train_delta')}",
         "",
         "## Characterization",
         "",
@@ -1093,6 +1118,19 @@ def _release_gap_target(config: PipelineConfig) -> float | None:
 
 def _transfer_readiness_breakdown(plan: dict[str, Any]) -> dict[str, Any]:
     transfer = dict(plan.get("transfer_score", {}))
+    if transfer.get("components"):
+        return {
+            "score_0_to_1": transfer.get("score_0_to_1"),
+            "interpretation": transfer.get("interpretation"),
+            "formula": transfer.get("score_policy", {}).get(
+                "formula",
+                "weighted average of included evidence components",
+            ),
+            "components": transfer.get("components", []),
+            "excluded_components": transfer.get("excluded_components", []),
+            "score_policy": transfer.get("score_policy", {}),
+            "note": "This is an internal evidence/readiness score, not an industry-standard physical sim2real metric.",
+        }
     weights = {
         "episode_score": 0.20,
         "success_component": 0.20,
@@ -1138,6 +1176,51 @@ def _release_gap_breakdown(
     }
 
 
+def _split_transfer_scores(records: list[Record], config: PipelineConfig) -> dict[str, Any]:
+    train_records = [record for record in records if not _record_is_heldout(record)]
+    heldout_records = [record for record in records if _record_is_heldout(record)]
+    splits: dict[str, Any] = {}
+    if train_records:
+        splits["train"] = _score_record_subset(train_records, config)
+    if heldout_records:
+        splits["heldout"] = _score_record_subset(heldout_records, config)
+    train_score = splits.get("train", {}).get("transfer_readiness_score")
+    heldout_score = splits.get("heldout", {}).get("transfer_readiness_score")
+    splits["heldout_vs_train_delta"] = (
+        None
+        if train_score is None or heldout_score is None
+        else round(float(heldout_score) - float(train_score), 3)
+    )
+    return splits
+
+
+def _score_record_subset(records: list[Record], config: PipelineConfig) -> dict[str, Any]:
+    gap = estimate_gap(records, config)
+    plan = build_plan(gap, config)
+    transfer = plan.get("transfer_score", {})
+    return {
+        "records": len(records),
+        "episodes": gap.get("summary", {}).get("episodes"),
+        "transfer_readiness_score": transfer.get("score_0_to_1"),
+        "release_gap_score": None
+        if transfer.get("score_0_to_1") is None
+        else round(max(0.0, 1.0 - float(transfer["score_0_to_1"])), 3),
+        "excluded_components": transfer.get("excluded_components", []),
+    }
+
+
+def _record_is_heldout(record: Record) -> bool:
+    raw = record.raw or {}
+    split_value = raw.get("split") or raw.get("dataset_split") or raw.get("eval_split") or raw.get("partition")
+    split = str(split_value).strip().lower() if split_value not in (None, "") else ""
+    flag = raw.get("heldout") or raw.get("is_holdout") or raw.get("holdout")
+    if isinstance(flag, bool):
+        return flag
+    if flag not in (None, ""):
+        return str(flag).strip().lower() in {"1", "true", "yes", "heldout", "holdout"}
+    return split in {"heldout", "holdout", "test", "validation", "val"}
+
+
 def _characterization_metrics(gap: dict[str, Any], plan: dict[str, Any], results: dict[str, dict[str, Any]]) -> dict[str, Any]:
     summary = gap.get("summary", {})
     delay = gap.get("delay", {})
@@ -1159,6 +1242,9 @@ def _characterization_metrics(gap: dict[str, Any], plan: dict[str, Any], results
             "delay_steps": delay.get("delay_steps"),
             "delay_seconds": delay.get("delay_seconds"),
             "delay_confidence": delay.get("confidence"),
+            "sample_rate_hz": delay.get("sample_rate_hz"),
+            "min_sample_rate_hz": delay.get("min_sample_rate_hz"),
+            "observability_status": delay.get("observability_status"),
             "deadband_command_norm": deadband.get("deadband_command_norm"),
             "swallowed_command_ratio": deadband.get("swallowed_command_ratio"),
             "deadband_confidence": deadband.get("confidence"),
@@ -1169,12 +1255,13 @@ def _characterization_metrics(gap: dict[str, Any], plan: dict[str, Any], results
             "position_error_p95_m": pose.get("position_error_p95_m"),
             "orientation_error_mean_deg": pose.get("orientation_error_mean_deg"),
             "orientation_error_p95_deg": pose.get("orientation_error_p95_deg"),
+            "validation_source": pose.get("validation_source"),
         },
         "contact": {
             "samples": contact.get("samples"),
-            "mean_force_n": contact.get("mean_force_n"),
-            "p95_force_n": contact.get("p95_force_n"),
-            "peak_force_n": contact.get("peak_force_n"),
+            "mean_force_n": contact.get("mean_force_n", contact.get("mean_n")),
+            "p95_force_n": contact.get("p95_force_n", contact.get("p95_n")),
+            "peak_force_n": contact.get("peak_force_n", contact.get("peak_n")),
             "over_limit_ratio": contact.get("over_limit_ratio"),
             "force_limit_n": contact.get("force_limit_n"),
         },

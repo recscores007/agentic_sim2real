@@ -798,7 +798,7 @@ def _impl_real_data_quality_gate(
         blocking_failures=[str(item) for item in report["blocking_failures"]],
         warnings=[str(item) for item in report["warnings"]],
         evidence_files=[evidence],
-        metrics=report["metrics"],
+        metrics={**report["metrics"], "data_readiness": report.get("data_readiness", {})},
     )
 
 

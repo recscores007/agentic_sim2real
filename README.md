@@ -178,6 +178,38 @@ The generated dashboard shows the pipeline in two lanes:
 The companion `ui/state.json` is the agent-readable version for publishing into
 a web service, notebook, or CI artifact viewer.
 
+## Early Data Readiness Alerts
+
+The first gate now checks whether the submitted real data can support the
+claims the pipeline is about to make. It alerts before SysID, AutoResearch, or
+release scoring over-trusts weak evidence.
+
+Generic alerts include:
+
+| Alert | Why It Matters | Typical Fix |
+| --- | --- | --- |
+| heldout frames missing | heldout pose/perception validation is impossible | extract and link frames for heldout videos, or mark screencast-only episodes |
+| low frame link coverage | pose-noise conclusions are sparse | run frame extraction/linking, or declare a trajectory-only characterization |
+| orphan frames detected | useful visual evidence is outside `records.jsonl` | ingest the orphan frames plus matching telemetry into aligned records |
+| auto-only all-positive labels | success score is a labeling artifact | add `success_label_source`, human-reviewed labels, and failure cases |
+| delay under-sampled | sub-sample actuation delay cannot be inferred | collect higher-rate telemetry or exclude delay confidence from scoring |
+| FK-proxy pose validation | pose estimate/reference are circular | cap pose score and add real vision-derived pose validation |
+
+These alerts are written to:
+
+```text
+outputs/<run>/skills/real_data_quality_gate/real_data_quality.json
+outputs/<run>/scorecard.json:data_readiness
+outputs/<run>/real_data_manifest.json:data_readiness
+outputs/<run>/run_record.json:score_breakdown.data_readiness
+outputs/<run>/ui/index.html
+```
+
+The transfer score also adapts: delay confidence is reweighted out when the log
+rate is below `agent.min_delay_sample_hz`, auto-only all-positive success labels
+cap the success component, and non-vision/FK-only pose validation caps the pose
+component. The scorecard separately reports train and heldout transfer scores.
+
 Every run also writes the slide 21-24 contract as JSON plus Markdown views:
 
 ```text
@@ -195,10 +227,10 @@ The same JSON drives the agent's next action and the human review view.
 | --- | --- |
 | `rollout_data.json` | `rollout_id`, `task`, `scenario`, `seed`, `streams`, `labels`, `outcome`, `calibration`, `sha256` |
 | `pipeline_input.json` | `task`, `mode`, `goal`, `scenarios`, `policy_ckpt`, `sim_config`, `real_data`, `skills_allowed`, `budget`, `kill_criteria`, `owner`, `submitted` |
-| `scorecard.json` | `task`, `mode`, `run_id`, `run_version`, `git_sha`, `transfer_readiness_score`, `transfer_readiness_breakdown`, `release_gap_score`, `release_gap_breakdown`, `characterization`, `policy_release`, `success_rate`, `regression_pp`, `per_skill`, `failure_modes`, `cost`, `verdict` |
+| `scorecard.json` | `task`, `mode`, `run_id`, `run_version`, `git_sha`, `transfer_readiness_score`, `transfer_readiness_breakdown`, `release_gap_score`, `release_gap_breakdown`, `data_readiness`, `split_scores`, `characterization`, `policy_release`, `success_rate`, `regression_pp`, `per_skill`, `failure_modes`, `cost`, `verdict` |
 | `pipeline_output.json` | `task`, `mode`, `release_id`, `status`, `policy_ckpt`, `sim_config`, `release_gap_score`, `success_real`, `characterization`, `policy_release`, `changes`, `used`, `provenance`, `deploy` |
 | `run_record.json` | `run`, `lineage.real_data_fed`, `lineage.policy_checkpoint`, `lineage.retraining`, `score_breakdown`, `pipeline_contract`, `artifacts`, `skills`, `release` |
-| `real_data_manifest.json` | `source_path`, `source_sha256`, `canonical_records`, `record_contract`, `files`, `rollouts` |
+| `real_data_manifest.json` | `source_path`, `source_sha256`, `canonical_records`, `record_contract`, `data_readiness`, `files`, `rollouts` |
 
 The rule is simple: if the LLM cannot point to a skill result, metric,
 scoreboard entry, critic finding, or release decision, it is only a suggestion.
@@ -215,6 +247,33 @@ real data that was fed through the pipeline, including a complete file manifest
 with SHA256 hashes, the canonical `records.jsonl` hash, rollout hashes, the
 policy checkpoint files and hashes, retraining source/target checkpoint metadata
 when configured, and the transfer-readiness/release-gap component breakdowns.
+
+## Golden Real Dataset
+
+Use `golden/real_datasets/data_readiness_stress/` to regression-test the
+pipeline's ability to catch bad or incomplete real data. It intentionally has
+10 Hz telemetry, missing optional streams, sparse frame links, zero heldout
+frame links, orphan SBL frames, all-positive auto labels, and FK-proxy pose
+validation.
+
+Regenerate it with:
+
+```bash
+python3 scripts/create_golden_real_dataset.py
+```
+
+Run the gate:
+
+```bash
+agentic-sim2real --config configs/ur10e_gear_assembly.example.json run-harness \
+  --root . \
+  --dataset golden/real_datasets/data_readiness_stress \
+  --out outputs/golden_data_readiness_check \
+  --skill real_data_quality_gate
+```
+
+The expected alert codes live in
+`golden/real_datasets/data_readiness_stress/expected_alerts.json`.
 
 ## Release Profiles
 

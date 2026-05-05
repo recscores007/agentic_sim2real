@@ -22,6 +22,8 @@ def estimate_gap(records: list[Record], config: PipelineConfig) -> dict:
     reset_scatter = estimate_reset_scatter(records)
 
     rate_hz = summary.get("estimated_rate_hz") or float(config.robot.get("control_rate_hz", 30.0))
+    min_delay_sample_hz = float(config.agent.get("min_delay_sample_hz", 50.0))
+    delay_observability_status = "adequate" if float(rate_hz) >= min_delay_sample_hz else "under_sampled"
     delay_steps = int(delay["delay_steps"])
     delay_s = delay_steps / rate_hz if rate_hz else 0.0
     action_scale = recommend_action_scale(
@@ -47,6 +49,10 @@ def estimate_gap(records: list[Record], config: PipelineConfig) -> dict:
         "delay": {
             **delay,
             "delay_seconds": round(delay_s, 4),
+            "sample_rate_hz": round(float(rate_hz), 3),
+            "min_sample_rate_hz": round(min_delay_sample_hz, 3),
+            "observability_status": delay_observability_status,
+            "score_policy": "excluded_when_under_sampled" if delay_observability_status == "under_sampled" else "included",
         },
         "deadband_stiction_proxy": deadband,
         "object_pose_noise": pose_noise,

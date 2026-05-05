@@ -50,6 +50,7 @@ DEFAULTS: dict[str, Any] = {
         "target_real_episodes": 10,
         "min_real_episodes_for_gate": 3,
         "max_recommended_delay_steps": 8,
+        "min_delay_sample_hz": 50.0,
         "precision_task": True,
         "target_real_success": 0.8,
         "gap_target": 0.1,

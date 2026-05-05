@@ -21,6 +21,7 @@ def evaluate_real_data_quality(
     blockers: list[str] = []
     warnings: list[str] = []
     metrics = _record_metrics(records)
+    readiness = evaluate_data_readiness(records, config, dataset_path=source)
 
     min_episodes = int(config.agent.get("min_real_episodes_for_gate", 3))
     if metrics["records"] == 0:
@@ -46,6 +47,8 @@ def evaluate_real_data_quality(
         warnings.append("joint velocity coverage is sparse; delay/stiction estimates may be less confident")
     if metrics["heldout_episodes"] == 0:
         warnings.append("no held-out episodes are marked; release-candidate promotion should use a held-out session")
+    warnings.extend(item["message"] for item in readiness["action_items"] if item["severity"] == "warning")
+    blockers.extend(item["message"] for item in readiness["action_items"] if item["severity"] == "blocker")
 
     session_report: dict[str, Any] | None = None
     if source.is_dir():
@@ -74,7 +77,88 @@ def evaluate_real_data_quality(
         "blocking_failures": blockers,
         "warnings": warnings,
         "metrics": metrics,
+        "data_readiness": readiness,
         "session_report": session_report,
+    }
+
+
+def evaluate_data_readiness(
+    records: list[Record],
+    config: PipelineConfig,
+    dataset_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Summarize whether submitted real data can support sim2real claims.
+
+    These checks are intentionally generic. They inspect canonical fields and
+    provenance hints, so the same gate works for manipulators, humanoids, and
+    mobile manipulators.
+    """
+
+    source = Path(dataset_path).expanduser() if dataset_path else None
+    total = len(records)
+    frame_link_records = [record for record in records if _record_frame_paths(record)]
+    heldout_records = [record for record in records if _is_heldout(record)]
+    heldout_frame_records = [record for record in heldout_records if _record_frame_paths(record)]
+    train_records = [record for record in records if not _is_heldout(record)]
+    train_frame_records = [record for record in train_records if _record_frame_paths(record)]
+    referenced_frames = _referenced_frame_paths(records, source)
+    discovered_frames = _discover_frame_files(source)
+    orphan_frames = sorted(str(path) for path in discovered_frames - referenced_frames)
+    existing_frame_record_count = (
+        sum(1 for record in frame_link_records if _record_has_existing_frame(record, source))
+        if source and source.is_dir()
+        else None
+    )
+    label_report = _success_label_report(records)
+    pose_report = _pose_validation_report(records)
+    rate_hz = _estimated_rate_hz(records)
+    min_delay_sample_hz = float(config.agent.get("min_delay_sample_hz", 50.0))
+    delay_observability_status = (
+        "unknown"
+        if rate_hz is None
+        else "adequate"
+        if rate_hz >= min_delay_sample_hz
+        else "under_sampled"
+    )
+    by_episode = _episode_readiness(records, source)
+    action_items = _readiness_action_items(
+        total=total,
+        frame_link_count=len(frame_link_records),
+        heldout_count=len(heldout_records),
+        heldout_frame_count=len(heldout_frame_records),
+        train_count=len(train_records),
+        train_frame_count=len(train_frame_records),
+        orphan_count=len(orphan_frames),
+        label_report=label_report,
+        pose_report=pose_report,
+        rate_hz=rate_hz,
+        min_delay_sample_hz=min_delay_sample_hz,
+        by_episode=by_episode,
+    )
+    status = "needs_attention" if action_items else "ready"
+    return {
+        "status": status,
+        "records": total,
+        "frame_link_coverage": _ratio(len(frame_link_records), total),
+        "train_frame_link_coverage": _ratio(len(train_frame_records), len(train_records)),
+        "heldout_frame_link_coverage": _ratio(len(heldout_frame_records), len(heldout_records)),
+        "existing_frame_coverage": None if existing_frame_record_count is None else _ratio(existing_frame_record_count, len(frame_link_records)),
+        "referenced_frame_count": len(referenced_frames),
+        "discovered_frame_count": len(discovered_frames),
+        "orphan_frame_count": len(orphan_frames),
+        "orphan_frame_examples": orphan_frames[:10],
+        "estimated_rate_hz": rate_hz,
+        "min_delay_sample_hz": round(min_delay_sample_hz, 3),
+        "delay_observability_status": delay_observability_status,
+        "success_labels": label_report,
+        "pose_validation": pose_report,
+        "episodes": by_episode,
+        "action_items": action_items,
+        "score_impacts": {
+            "delay_excluded_from_transfer_score": delay_observability_status == "under_sampled",
+            "success_component_trusted": label_report["trust_level"] == "human_or_mixed",
+            "pose_score_cap": 0.5 if pose_report["validation_source"] != "vision_validated" else 1.0,
+        },
     }
 
 
@@ -103,6 +187,7 @@ def _record_metrics(records: list[Record]) -> dict[str, Any]:
         "heldout_session_count": _heldout_session_count(records),
         "action_dims": sorted({len(record.action) for record in records}),
         "joint_dims": sorted({len(record.joint_state) for record in records}),
+        "frame_link_coverage": _ratio(sum(1 for record in records if _record_frame_paths(record)), total),
         "joint_velocity_coverage": _ratio(joint_velocity_count, total),
         "contact_coverage": _ratio(contact_count, total),
         "success_label_coverage": _ratio(success_count, total),
@@ -171,3 +256,357 @@ def _is_heldout(record: Record) -> bool:
     if heldout_flag not in (None, ""):
         return str(heldout_flag).strip().lower() in {"1", "true", "yes", "heldout", "holdout"}
     return split in {"heldout", "holdout", "test", "validation", "val"}
+
+
+def _record_frame_paths(record: Record) -> list[str]:
+    raw = record.raw or {}
+    paths: list[str] = []
+    camera = raw.get("camera")
+    if isinstance(camera, dict):
+        for key in ("color_image", "depth_image", "image", "frame_path", "rgb_path", "depth_path"):
+            value = camera.get(key)
+            if value not in (None, ""):
+                paths.append(str(value))
+    for key in (
+        "frame_path",
+        "image_path",
+        "rgb_path",
+        "color_image",
+        "depth_image",
+        "camera_frame",
+        "camera_frame_path",
+        "visual_frame",
+    ):
+        value = raw.get(key)
+        if value not in (None, ""):
+            paths.append(str(value))
+    return sorted(set(paths))
+
+
+def _referenced_frame_paths(records: list[Record], source: Path | None) -> set[Path]:
+    if source is None:
+        return set()
+    root = _dataset_root(source)
+    paths = set()
+    for record in records:
+        for value in _record_frame_paths(record):
+            path = Path(value).expanduser()
+            if not path.is_absolute():
+                path = root / path
+            paths.add(path.resolve())
+    return paths
+
+
+def _record_has_existing_frame(record: Record, source: Path) -> bool:
+    root = _dataset_root(source)
+    for value in _record_frame_paths(record):
+        path = Path(value).expanduser()
+        if not path.is_absolute():
+            path = root / path
+        if path.exists():
+            return True
+    return False
+
+
+def _discover_frame_files(source: Path | None) -> set[Path]:
+    if source is None or not source.is_dir():
+        return set()
+    root = _dataset_root(source)
+    frame_roots = [root / "frames_full", root / "camera_data" / "color", root / "camera_data" / "depth"]
+    exts = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp"}
+    paths: set[Path] = set()
+    for frame_root in frame_roots:
+        if not frame_root.exists():
+            continue
+        for path in frame_root.rglob("*"):
+            if path.is_file() and path.suffix.lower() in exts:
+                paths.add(path.resolve())
+    return paths
+
+
+def _dataset_root(source: Path) -> Path:
+    if source.is_dir():
+        return source
+    if source.parent.name == "aligned":
+        return source.parent.parent
+    return source.parent
+
+
+def _success_label_report(records: list[Record]) -> dict[str, Any]:
+    labeled = [record for record in records if record.success is not None]
+    source_counts: dict[str, int] = {}
+    for record in labeled:
+        source = _raw_first(record, "success_label_source", "label_source", "outcome_source", default="unknown")
+        source_counts[str(source)] = source_counts.get(str(source), 0) + 1
+    positive = sum(1 for record in labeled if record.success is True)
+    auto_sources = {
+        "auto",
+        "automatic",
+        "tracking_error_threshold",
+        "threshold",
+        "heuristic",
+        "generated",
+        "script",
+        "unknown",
+    }
+    human_sources = {"human", "manual", "operator", "reviewed", "human_reviewed"}
+    normalized_sources = {source.strip().lower() for source in source_counts}
+    has_human = bool(normalized_sources & human_sources)
+    all_auto = bool(source_counts) and all(source in auto_sources for source in normalized_sources)
+    all_positive = bool(labeled) and positive == len(labeled)
+    return {
+        "labeled_records": len(labeled),
+        "positive_records": positive,
+        "coverage": _ratio(len(labeled), len(records)),
+        "source_counts": dict(sorted(source_counts.items())),
+        "all_positive": all_positive,
+        "all_auto_generated": all_auto,
+        "trust_level": "human_or_mixed" if has_human else "auto_only" if all_auto else "unknown",
+    }
+
+
+def _pose_validation_report(records: list[Record]) -> dict[str, Any]:
+    samples = 0
+    identical = 0
+    source_counts: dict[str, int] = {}
+    frame_linked = 0
+    vision_validated = 0
+    for record in records:
+        if _record_frame_paths(record):
+            frame_linked += 1
+        est = record.object_pose_estimate
+        ref = record.object_pose_reference
+        if len(est) >= 3 and len(ref) >= 3:
+            samples += 1
+            if _vectors_close(est, ref):
+                identical += 1
+        source = _raw_first(
+            record,
+            "pose_validation_source",
+            "object_pose_estimate_source",
+            "shaft_pose_estimate_source",
+            "pose_source",
+            default="unknown",
+        )
+        source_text = str(source).strip().lower()
+        source_counts[source_text] = source_counts.get(source_text, 0) + 1
+        if any(token in source_text for token in ("vision", "camera", "foundationpose", "aruco", "apriltag", "vslam")):
+            vision_validated += 1
+
+    identical_ratio = _ratio(identical, samples)
+    normalized_sources = set(source_counts)
+    if samples == 0:
+        validation_source = "missing"
+    elif vision_validated > 0 and identical_ratio < 0.95:
+        validation_source = "vision_validated"
+    elif identical_ratio >= 0.95 or any("fk" in source or "forward_kinematics" in source for source in normalized_sources):
+        validation_source = "fk_proxy_only"
+    elif frame_linked > 0:
+        validation_source = "frame_linked_unverified"
+    else:
+        validation_source = "unproven"
+    return {
+        "samples": samples,
+        "validation_source": validation_source,
+        "identical_estimate_reference_ratio": identical_ratio,
+        "frame_linked_records": frame_linked,
+        "source_counts": dict(sorted(source_counts.items())),
+    }
+
+
+def _vectors_close(a: list[float], b: list[float], eps: float = 1e-9) -> bool:
+    n = min(len(a), len(b))
+    return n > 0 and all(abs(float(a[i]) - float(b[i])) <= eps for i in range(n))
+
+
+def _estimated_rate_hz(records: list[Record]) -> float | None:
+    by_episode: dict[int, list[float]] = defaultdict(list)
+    for record in records:
+        by_episode[record.episode_index].append(record.timestamp)
+    dts: list[float] = []
+    for values in by_episode.values():
+        ordered = sorted(values)
+        dts.extend(b - a for a, b in zip(ordered, ordered[1:]) if b > a)
+    if not dts:
+        return None
+    dts = sorted(dts)
+    mid = len(dts) // 2
+    median_dt = dts[mid] if len(dts) % 2 else (dts[mid - 1] + dts[mid]) / 2.0
+    return round(1.0 / median_dt, 3) if median_dt > 0 else None
+
+
+def _episode_readiness(records: list[Record], source: Path | None) -> list[dict[str, Any]]:
+    by_episode: dict[int, list[Record]] = defaultdict(list)
+    for record in records:
+        by_episode[record.episode_index].append(record)
+    rows = []
+    for episode, episode_records in sorted(by_episode.items()):
+        frame_links = sum(1 for record in episode_records if _record_frame_paths(record))
+        split = _split_name(episode_records[0])
+        scenario = _raw_first(episode_records[0], "scenario", "algorithm", "planner", "algo", default=f"episode_{episode}")
+        row = {
+            "episode_index": episode,
+            "scenario": str(scenario),
+            "split": split,
+            "records": len(episode_records),
+            "frame_link_coverage": _ratio(frame_links, len(episode_records)),
+            "success_label_sources": _success_label_report(episode_records)["source_counts"],
+            "pose_validation_source": _pose_validation_report(episode_records)["validation_source"],
+        }
+        if source and source.is_dir():
+            existing = sum(1 for record in episode_records if _record_has_existing_frame(record, source))
+            row["existing_frame_coverage"] = _ratio(existing, frame_links)
+        rows.append(row)
+    return rows
+
+
+def _readiness_action_items(
+    *,
+    total: int,
+    frame_link_count: int,
+    heldout_count: int,
+    heldout_frame_count: int,
+    train_count: int,
+    train_frame_count: int,
+    orphan_count: int,
+    label_report: dict[str, Any],
+    pose_report: dict[str, Any],
+    rate_hz: float | None,
+    min_delay_sample_hz: float,
+    by_episode: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    frame_coverage = _ratio(frame_link_count, total)
+    train_frame_coverage = _ratio(train_frame_count, train_count)
+    heldout_frame_coverage = _ratio(heldout_frame_count, heldout_count)
+    if heldout_count > 0 and heldout_frame_count == 0:
+        items.append(
+            _action_item(
+                "warning",
+                "user",
+                "heldout_frames_missing",
+                "held-out records have no linked camera frames",
+                "Pose/perception validation cannot be trusted on held-out data.",
+                "Extract or link camera frames for held-out episodes that have video; mark screencast-only episodes as a limitation.",
+            )
+        )
+    if total > 0 and frame_coverage < 0.2:
+        items.append(
+            _action_item(
+                "warning",
+                "user",
+                "low_frame_link_coverage",
+                f"camera frame link coverage is {frame_coverage:.3f}",
+                "Pose-based conclusions will be sparse and the critic should down-rank perception claims.",
+                "Link frames to records or explicitly run a no-vision characterization profile.",
+            )
+        )
+    elif train_count > 0 and train_frame_coverage < 0.5:
+        items.append(
+            _action_item(
+                "warning",
+                "user",
+                "sparse_training_frames",
+                f"training frame link coverage is {train_frame_coverage:.3f}",
+                "The agent can tune trajectory/contact parameters, but camera-pose noise evidence is weak.",
+                "Improve frame extraction/linking before drawing strong perception-noise conclusions.",
+            )
+        )
+    if orphan_count > 0:
+        items.append(
+            _action_item(
+                "warning",
+                "pipeline",
+                "orphan_frames_detected",
+                f"{orphan_count} image files are present but not referenced by records",
+                "Useful video evidence may be sitting outside the canonical pipeline input.",
+                "Run ingestion/linking to convert orphan frames and matching telemetry into aligned records.",
+            )
+        )
+    if label_report["all_positive"] and label_report["all_auto_generated"]:
+        items.append(
+            _action_item(
+                "warning",
+                "user",
+                "auto_positive_success_labels",
+                "success labels are auto-generated and all positive",
+                "A perfect success component would be a labeling artifact, not real policy performance.",
+                "Keep success_label_source per record, add human-reviewed labels, and include failure cases before policy-release claims.",
+            )
+        )
+    if rate_hz is not None and rate_hz < min_delay_sample_hz:
+        items.append(
+            _action_item(
+                "warning",
+                "pipeline",
+                "delay_under_sampled",
+                f"trajectory rate is {rate_hz:.3f} Hz; delay estimation requires at least {min_delay_sample_hz:.3f} Hz",
+                "Sub-sample actuation delay cannot be estimated reliably from this log.",
+                "Exclude delay confidence from transfer scoring, or collect higher-rate telemetry for latency SysID.",
+            )
+        )
+    if pose_report["validation_source"] == "fk_proxy_only":
+        items.append(
+            _action_item(
+                "warning",
+                "pipeline",
+                "fk_proxy_pose_validation",
+                "pose estimate/reference appear to be the same FK proxy",
+                "A pose score of 1.0 would be circular unless real vision validation is present.",
+                "Cap the pose component, flag pose_validation_source=fk_proxy_only, and add real visual pose estimates when needed.",
+            )
+        )
+    elif pose_report["validation_source"] in {"missing", "unproven", "frame_linked_unverified"}:
+        items.append(
+            _action_item(
+                "warning",
+                "user",
+                "pose_validation_unproven",
+                f"pose validation source is {pose_report['validation_source']}",
+                "The pipeline can tune non-vision parameters, but pose-noise confidence is limited.",
+                "Add vision-derived object pose estimates/references or mark this run as trajectory-only characterization.",
+            )
+        )
+    zero_frame_episodes = [
+        row for row in by_episode if row["records"] > 0 and row["frame_link_coverage"] == 0.0
+    ]
+    if zero_frame_episodes:
+        examples = ", ".join(str(row["scenario"]) for row in zero_frame_episodes[:5])
+        items.append(
+            _action_item(
+                "warning",
+                "user",
+                "episode_frame_gaps",
+                f"{len(zero_frame_episodes)} episode(s) have zero frame links",
+                "Some planners/scenarios cannot support visual holdout checks.",
+                f"Prioritize frame extraction/linking for: {examples}.",
+            )
+        )
+    return items
+
+
+def _action_item(
+    severity: str,
+    owner: str,
+    code: str,
+    message: str,
+    impact: str,
+    recommended_fix: str,
+) -> dict[str, str]:
+    return {
+        "severity": severity,
+        "owner": owner,
+        "code": code,
+        "message": message,
+        "impact": impact,
+        "recommended_fix": recommended_fix,
+    }
+
+
+def _raw_first(record: Record, *keys: str, default: Any = None) -> Any:
+    raw = record.raw or {}
+    for key in keys:
+        value = raw.get(key)
+        if value not in (None, ""):
+            return value
+    return default

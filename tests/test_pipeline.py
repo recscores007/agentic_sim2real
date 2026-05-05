@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from agentic_sim2real.artifacts import build_scorecard
+from agentic_sim2real.autoresearch import build_plan
 from agentic_sim2real.cli import main
 from agentic_sim2real.config import choose_task, load_config, nominal_action_scale
 from agentic_sim2real.data_quality import evaluate_real_data_quality
@@ -107,6 +109,8 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("run_version", scorecard)
             self.assertIn("transfer_readiness_breakdown", scorecard)
             self.assertIn("release_gap_breakdown", scorecard)
+            self.assertIn("data_readiness", scorecard)
+            self.assertIn("split_scores", scorecard)
             self.assertIn("characterization", scorecard)
             self.assertIn("policy_release", scorecard)
             pipeline_output = json.loads((Path(tmp) / "pipeline_output.json").read_text())
@@ -122,15 +126,19 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(ui_state["mode"], "characterization")
             self.assertIn("workflow", ui_state)
             self.assertIn("run_record", ui_state)
+            self.assertIn("data_readiness", ui_state)
+            self.assertIn("split_scores", ui_state)
             run_record = json.loads(Path(artifacts["run_record"]).read_text())
             self.assertEqual(run_record["schema"], "agentic_sim2real.slide_contract.v1.run_record")
             self.assertEqual(run_record["run"]["run_version"], scorecard["run_version"])
             self.assertGreater(run_record["lineage"]["real_data_fed"]["file_count"], 0)
             self.assertIn("policy_checkpoint", run_record["lineage"])
             self.assertIn("transfer_readiness", run_record["score_breakdown"])
+            self.assertIn("data_readiness", run_record["score_breakdown"])
             real_data_manifest = json.loads(Path(artifacts["real_data_manifest"]).read_text())
             self.assertEqual(real_data_manifest["schema"], "agentic_sim2real.slide_contract.v1.real_data_manifest")
             self.assertGreater(len(real_data_manifest["files"]), 0)
+            self.assertIn("data_readiness", real_data_manifest)
 
     def test_stronger_preflight_reports_sysid_backends(self) -> None:
         cfg = load_config(ROOT / "configs" / "ur10e_gear_assembly.example.json")
@@ -435,6 +443,40 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["metrics"]["episodes"], 3)
         self.assertEqual(report["metrics"]["missing_object_pose_estimate"], 0)
+        self.assertIn("data_readiness", report)
+
+    def test_golden_data_readiness_stress_fixture_detects_expected_alerts(self) -> None:
+        cfg = load_config(ROOT / "configs" / "ur10e_gear_assembly.example.json")
+        dataset = ROOT / "golden" / "real_datasets" / "data_readiness_stress"
+        expected = json.loads((dataset / "expected_alerts.json").read_text())
+        report = evaluate_real_data_quality(dataset, cfg, root=ROOT)
+        readiness = report["data_readiness"]
+        codes = {item["code"] for item in readiness["action_items"]}
+        for code in expected["must_detect"]:
+            self.assertIn(code, codes)
+        self.assertEqual(readiness["delay_observability_status"], "under_sampled")
+        self.assertEqual(readiness["pose_validation"]["validation_source"], "fk_proxy_only")
+        self.assertTrue(readiness["score_impacts"]["delay_excluded_from_transfer_score"])
+        self.assertFalse(readiness["score_impacts"]["success_component_trusted"])
+
+        records = load_records(dataset)
+        gap = estimate_gap(records, cfg)
+        plan = build_plan(gap, cfg)
+        transfer = plan["transfer_score"]
+        self.assertEqual(gap["delay"]["observability_status"], "under_sampled")
+        self.assertIn("delay_confidence", {item["component"] for item in transfer["excluded_components"]})
+        self.assertLessEqual(transfer["pose_score"], 0.5)
+        self.assertLessEqual(transfer["success_component"], 0.5)
+
+        scorecard = build_scorecard(
+            dataset,
+            cfg,
+            records,
+            results={},
+            scoreboard={"status": "pass", "release_candidate_ready": False, "human_review_readiness": "smoke_review_only"},
+        )
+        self.assertIn("heldout", scorecard["split_scores"])
+        self.assertIsNotNone(scorecard["split_scores"]["heldout_vs_train_delta"])
 
     def test_harness_auto_prepares_raw_csv_session(self) -> None:
         source = ROOT / "embodiments" / "manipulator" / "ur10e_gear_assembly" / "real_data" / "example_session"

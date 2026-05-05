@@ -70,21 +70,69 @@ def compute_transfer_score(gap: dict, config: PipelineConfig) -> dict:
     episode_score = min(1.0, summary["episodes"] / episode_target)
     success_rate = summary.get("success_rate")
     success_component = success_rate if success_rate is not None else 0.5
+    success_discount_reason = None
+    if summary.get("all_auto_success_labels") and summary.get("all_positive_success_labels"):
+        success_component = min(float(success_component), 0.5)
+        success_discount_reason = "all success labels are auto-generated and positive, so the success component is capped at 0.5"
     delay_conf = float(gap["delay"].get("confidence", 0.0))
     deadband_conf = float(gap["deadband_stiction_proxy"].get("confidence", 0.0))
     pose_samples = int(gap["object_pose_noise"].get("samples", 0) or 0)
     pose_score = min(1.0, pose_samples / 20.0)
+    pose_validation_source = str(gap["object_pose_noise"].get("validation_source") or "unknown")
+    pose_cap_reason = None
+    if pose_validation_source != "vision_validated":
+        cap = 0.0 if pose_validation_source == "missing" else 0.5
+        if pose_score > cap:
+            pose_cap_reason = f"pose validation source is {pose_validation_source}, so pose_score is capped at {cap}"
+        pose_score = min(pose_score, cap)
     contact_over = float(gap["contact"].get("over_limit_ratio", 0.0))
     contact_score = max(0.0, 1.0 - contact_over)
 
-    score = (
-        0.2 * episode_score
-        + 0.2 * success_component
-        + 0.15 * delay_conf
-        + 0.15 * deadband_conf
-        + 0.15 * pose_score
-        + 0.15 * contact_score
-    )
+    base_weights = {
+        "episode_score": 0.20,
+        "success_component": 0.20,
+        "delay_confidence": 0.15,
+        "deadband_confidence": 0.15,
+        "pose_score": 0.15,
+        "contact_score": 0.15,
+    }
+    values = {
+        "episode_score": float(episode_score),
+        "success_component": float(success_component),
+        "delay_confidence": float(delay_conf),
+        "deadband_confidence": float(deadband_conf),
+        "pose_score": float(pose_score),
+        "contact_score": float(contact_score),
+    }
+    excluded_components = []
+    if str(gap["delay"].get("observability_status")) == "under_sampled":
+        excluded_components.append(
+            {
+                "component": "delay_confidence",
+                "reason": "trajectory sample rate is below agent.min_delay_sample_hz; delay confidence would be structurally low",
+                "sample_rate_hz": gap["delay"].get("sample_rate_hz"),
+                "min_sample_rate_hz": gap["delay"].get("min_sample_rate_hz"),
+            }
+        )
+    excluded_names = {item["component"] for item in excluded_components}
+    active_weight = sum(weight for key, weight in base_weights.items() if key not in excluded_names)
+    score = 0.0
+    components = []
+    for key, base_weight in base_weights.items():
+        included = key not in excluded_names
+        effective_weight = base_weight / active_weight if included and active_weight > 0 else 0.0
+        contribution = effective_weight * values[key] if included else 0.0
+        score += contribution
+        components.append(
+            {
+                "component": key,
+                "base_weight": base_weight,
+                "effective_weight": round(effective_weight, 3),
+                "value": round(values[key], 3),
+                "included": included,
+                "weighted_contribution": round(contribution, 3),
+            }
+        )
     return {
         "score_0_to_1": round(score, 3),
         "episode_score": round(episode_score, 3),
@@ -93,6 +141,13 @@ def compute_transfer_score(gap: dict, config: PipelineConfig) -> dict:
         "deadband_confidence": deadband_conf,
         "pose_score": round(pose_score, 3),
         "contact_score": round(contact_score, 3),
+        "components": components,
+        "excluded_components": excluded_components,
+        "score_policy": {
+            "formula": "weighted average of included evidence components; excluded components are reweighted out",
+            "success_discount_reason": success_discount_reason,
+            "pose_cap_reason": pose_cap_reason,
+        },
         "interpretation": interpret_score(score),
     }
 

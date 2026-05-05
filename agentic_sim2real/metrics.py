@@ -11,12 +11,14 @@ def summarize_records(records: list[Record]) -> dict:
     episodes = sorted({r.episode_index for r in records})
     timestamps_by_episode: dict[int, list[float]] = defaultdict(list)
     successes: dict[int, bool] = {}
+    success_label_sources: Counter[str] = Counter()
     failures: Counter[str] = Counter()
     contact_forces = []
     for rec in records:
         timestamps_by_episode[rec.episode_index].append(rec.timestamp)
         if rec.success is not None:
             successes[rec.episode_index] = rec.success
+            success_label_sources[_success_label_source(rec)] += 1
         if rec.failure_mode:
             failures[rec.failure_mode] += 1
         if rec.contact_force is not None:
@@ -31,6 +33,10 @@ def summarize_records(records: list[Record]) -> dict:
     success_rate = None
     if successes:
         success_rate = sum(1 for ok in successes.values() if ok) / len(successes)
+    auto_sources = {"auto", "automatic", "tracking_error_threshold", "threshold", "heuristic", "generated", "script", "unknown"}
+    normalized_sources = {source.strip().lower() for source in success_label_sources}
+    all_auto_success_labels = bool(success_label_sources) and all(source in auto_sources for source in normalized_sources)
+    all_positive_success_labels = bool(successes) and all(successes.values())
 
     return {
         "records": len(records),
@@ -42,6 +48,9 @@ def summarize_records(records: list[Record]) -> dict:
         "estimated_rate_hz": round(1.0 / median_dt, 3) if median_dt else None,
         "success_labeled_episodes": len(successes),
         "success_rate": round(success_rate, 3) if success_rate is not None else None,
+        "success_label_sources": dict(success_label_sources),
+        "all_auto_success_labels": all_auto_success_labels,
+        "all_positive_success_labels": all_positive_success_labels,
         "failure_modes": dict(failures),
         "contact_force_mean_n": round(statistics.mean(contact_forces), 3) if contact_forces else None,
         "contact_force_peak_n": round(max(contact_forces), 3) if contact_forces else None,
@@ -126,13 +135,37 @@ def estimate_deadband(records: list[Record]) -> dict:
 def estimate_pose_noise(records: list[Record]) -> dict:
     pos_errors = []
     quat_errors_deg = []
+    identical = 0
+    source_counts: Counter[str] = Counter()
+    frame_linked = 0
+    vision_validated = 0
     for rec in records:
         est = rec.shaft_pose_estimate
         ref = rec.shaft_pose_reference
         if len(est) >= 3 and len(ref) >= 3:
             pos_errors.append(_norm([a - b for a, b in zip(est[:3], ref[:3])]))
+            if _vectors_close(est, ref):
+                identical += 1
         if len(est) >= 7 and len(ref) >= 7:
             quat_errors_deg.append(_quat_angle_error_deg(est[3:7], ref[3:7]))
+        if _record_frame_paths(rec):
+            frame_linked += 1
+        source = _pose_source(rec)
+        source_counts[source] += 1
+        if any(token in source for token in ("vision", "camera", "foundationpose", "aruco", "apriltag", "vslam")):
+            vision_validated += 1
+
+    identical_ratio = round(identical / len(pos_errors), 3) if pos_errors else 0.0
+    if not pos_errors:
+        validation_source = "missing"
+    elif vision_validated > 0 and identical_ratio < 0.95:
+        validation_source = "vision_validated"
+    elif identical_ratio >= 0.95 or any("fk" in source or "forward_kinematics" in source for source in source_counts):
+        validation_source = "fk_proxy_only"
+    elif frame_linked > 0:
+        validation_source = "frame_linked_unverified"
+    else:
+        validation_source = "unproven"
 
     return {
         "samples": len(pos_errors),
@@ -140,6 +173,10 @@ def estimate_pose_noise(records: list[Record]) -> dict:
         "position_error_p95_m": round(_percentile(pos_errors, 0.95), 6) if pos_errors else None,
         "orientation_error_mean_deg": round(statistics.mean(quat_errors_deg), 3) if quat_errors_deg else None,
         "orientation_error_p95_deg": round(_percentile(quat_errors_deg, 0.95), 3) if quat_errors_deg else None,
+        "validation_source": validation_source,
+        "identical_estimate_reference_ratio": identical_ratio,
+        "frame_linked_records": frame_linked,
+        "source_counts": dict(source_counts),
     }
 
 
@@ -238,3 +275,41 @@ def _normalize_quat(q: list[float]) -> list[float]:
     if norm <= 1e-12:
         return [0.0, 0.0, 0.0, 1.0]
     return [v / norm for v in q]
+
+
+def _success_label_source(record: Record) -> str:
+    raw = record.raw or {}
+    value = raw.get("success_label_source") or raw.get("label_source") or raw.get("outcome_source")
+    return str(value).strip().lower() if value not in (None, "") else "unknown"
+
+
+def _pose_source(record: Record) -> str:
+    raw = record.raw or {}
+    value = (
+        raw.get("pose_validation_source")
+        or raw.get("object_pose_estimate_source")
+        or raw.get("shaft_pose_estimate_source")
+        or raw.get("pose_source")
+    )
+    return str(value).strip().lower() if value not in (None, "") else "unknown"
+
+
+def _record_frame_paths(record: Record) -> list[str]:
+    raw = record.raw or {}
+    paths: list[str] = []
+    camera = raw.get("camera")
+    if isinstance(camera, dict):
+        for key in ("color_image", "depth_image", "image", "frame_path", "rgb_path", "depth_path"):
+            value = camera.get(key)
+            if value not in (None, ""):
+                paths.append(str(value))
+    for key in ("frame_path", "image_path", "rgb_path", "color_image", "depth_image", "camera_frame", "camera_frame_path"):
+        value = raw.get(key)
+        if value not in (None, ""):
+            paths.append(str(value))
+    return paths
+
+
+def _vectors_close(a: list[float], b: list[float], eps: float = 1e-9) -> bool:
+    n = min(len(a), len(b))
+    return n > 0 and all(abs(float(a[i]) - float(b[i])) <= eps for i in range(n))

@@ -1,0 +1,2 @@
+timestamp,camera_name,color_image,depth_image
+0.56,golden_fixture_camera,camera_data/color/BKPIECE/frame_000000.png,camera_data/depth/BKPIECE/frame_000000.png
