@@ -39,6 +39,15 @@
     "max_recommended_delay_steps": 8,
     "precision_task": true
   },
+  "llm_orchestrator": {
+    "provider": "scripted",
+    "command": [],
+    "model": "",
+    "max_steps": 32,
+    "max_invalid_decisions": 3,
+    "allow_retries": false,
+    "budget_skill_calls": 24
+  },
   "sysid": {
     "sysid_backend_preference": ["newton", "pace", "local"],
     "newton_enabled": false,

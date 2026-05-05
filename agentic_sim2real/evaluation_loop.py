@@ -8,8 +8,8 @@ from typing import Any
 from .autoresearch import build_plan
 from .config import load_config
 from .dataset import load_records
+from .llm_orchestrator import run_llm_orchestrated_loop
 from .real_data import ensure_aligned_dataset
-from .skill_harness import run_harness
 from .sysid import estimate_gap
 
 
@@ -24,6 +24,9 @@ def run_evaluation_loop(
     threshold_policy_path: str | Path | None = None,
     include_real: bool = False,
     skill_dirs: list[str | Path] | None = None,
+    llm_provider_name: str | None = None,
+    llm_command: list[str] | None = None,
+    max_steps: int | None = None,
 ) -> dict[str, Any]:
     root_path = Path(root).resolve()
     out = Path(out_dir).expanduser().resolve()
@@ -36,14 +39,18 @@ def run_evaluation_loop(
     threshold_policy = load_threshold_policy(root_path, threshold_policy_path)
 
     proposal = agent_proposes(plan, gap, out)
-    scoreboard = run_harness(
+    orchestrator = run_llm_orchestrated_loop(
         root=root_path,
         config_path=config_path,
         dataset_path=resolved_dataset_path,
         out_dir=out / "harness",
         include_real=include_real,
         skill_dirs=skill_dirs,
+        provider_name=llm_provider_name,
+        provider_command=llm_command,
+        max_steps=max_steps,
     )
+    scoreboard = orchestrator["scoreboard"]
     measurements = evaluator_measures(scoreboard, threshold_policy, out)
     critique = critic_challenges(scoreboard, threshold_policy, out)
     decision = release_gate_decides(scoreboard, critique, out)
@@ -52,6 +59,11 @@ def run_evaluation_loop(
     trace = {
         "threshold_policy": threshold_policy,
         "agent_proposes": proposal,
+        "llm_orchestrator": {
+            key: value
+            for key, value in orchestrator.items()
+            if key != "scoreboard"
+        },
         "evaluator_measures": measurements,
         "critic_challenges": critique,
         "release_gate_decides": decision,
@@ -201,6 +213,13 @@ def write_trace_markdown(trace: dict[str, Any]) -> str:
         f"- Transfer score: {trace['agent_proposes']['transfer_score']['score_0_to_1']}",
         f"- Experiments proposed: {len(trace['agent_proposes']['experiments'])}",
         f"- Authority: {trace['agent_proposes']['authority_limit']}",
+        "",
+        "## LLM Orchestrator",
+        "",
+        f"- Provider: {trace['llm_orchestrator']['provider']}",
+        f"- Status: {trace['llm_orchestrator']['orchestrator_status']}",
+        f"- Skill calls: {trace['llm_orchestrator']['skill_calls']}",
+        f"- Journal: `{trace['llm_orchestrator']['journal']}`",
         "",
         "## Evaluator Measures",
         "",

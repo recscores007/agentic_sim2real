@@ -9,6 +9,7 @@ from .config import PipelineConfig, choose_task, command_env, load_config
 from .dataset import load_records
 from .embodiments import validate_embodiments
 from .evaluation_loop import run_evaluation_loop
+from .llm_orchestrator import load_provider_command_json, run_llm_orchestrated_loop
 from .preflight import run_preflight
 from .real_data import ensure_aligned_dataset, inspect_real_session, prepare_real_session
 from .report import write_outputs
@@ -60,13 +61,26 @@ def main(argv: list[str] | None = None) -> int:
     harness.add_argument("--skill-dir", action="append", default=[], help="Overlay directory with replacement skills")
     harness.add_argument("--include-real", action="store_true", help="Include real-robot skills after human approval")
 
-    eval_loop = sub.add_parser("run-evaluation-loop", help="Run Agent/Evaluator/Critic/Release/Human trace")
+    eval_loop = sub.add_parser("run-evaluation-loop", help="Run LLM/Agent/Evaluator/Critic/Release/Human trace")
     eval_loop.add_argument("--root", default=".")
     eval_loop.add_argument("--dataset", default="sample_data/real_log_demo.jsonl")
     eval_loop.add_argument("--out", required=True)
     eval_loop.add_argument("--threshold-policy", default=None)
     eval_loop.add_argument("--skill-dir", action="append", default=[], help="Overlay directory with replacement skills")
     eval_loop.add_argument("--include-real", action="store_true")
+    eval_loop.add_argument("--llm-provider", default=None, help="LLM provider: scripted or command")
+    eval_loop.add_argument("--llm-command-json", default=None, help="JSON list command for command-backed LLM provider")
+    eval_loop.add_argument("--max-steps", type=int, default=None)
+
+    llm_loop = sub.add_parser("run-llm-loop", help="Run the LLM-orchestrated skill loop")
+    llm_loop.add_argument("--root", default=".")
+    llm_loop.add_argument("--dataset", default="sample_data/real_log_demo.jsonl")
+    llm_loop.add_argument("--out", required=True)
+    llm_loop.add_argument("--skill-dir", action="append", default=[], help="Overlay directory with replacement skills")
+    llm_loop.add_argument("--include-real", action="store_true")
+    llm_loop.add_argument("--llm-provider", default=None, help="LLM provider: scripted or command")
+    llm_loop.add_argument("--llm-command-json", default=None, help="JSON list command for command-backed LLM provider")
+    llm_loop.add_argument("--max-steps", type=int, default=None)
 
     sub.add_parser("check-real-gate", help="Fail unless the real-robot human gate env var is set")
 
@@ -100,6 +114,21 @@ def main(argv: list[str] | None = None) -> int:
             args.threshold_policy,
             args.include_real,
             args.skill_dir,
+            args.llm_provider,
+            args.llm_command_json,
+            args.max_steps,
+        )
+    if args.cmd == "run-llm-loop":
+        return cmd_run_llm_loop(
+            args.root,
+            args.config,
+            args.dataset,
+            args.out,
+            args.include_real,
+            args.skill_dir,
+            args.llm_provider,
+            args.llm_command_json,
+            args.max_steps,
         )
     if args.cmd == "check-real-gate":
         require_real_robot_gate(config)
@@ -240,6 +269,9 @@ def cmd_run_evaluation_loop(
     threshold_policy_path: str | None,
     include_real: bool,
     skill_dirs: list[str],
+    llm_provider: str | None,
+    llm_command_json: str | None,
+    max_steps: int | None,
 ) -> int:
     trace = run_evaluation_loop(
         root=root,
@@ -249,9 +281,38 @@ def cmd_run_evaluation_loop(
         threshold_policy_path=threshold_policy_path,
         include_real=include_real,
         skill_dirs=skill_dirs,
+        llm_provider_name=llm_provider,
+        llm_command=load_provider_command_json(llm_command_json),
+        max_steps=max_steps,
     )
     print(json.dumps(trace, indent=2, sort_keys=True))
     return 0 if trace["release_gate_decides"]["status"] == "promote_to_human_review" else 1
+
+
+def cmd_run_llm_loop(
+    root: str,
+    config_path: str,
+    dataset_path: str,
+    out_dir: str,
+    include_real: bool,
+    skill_dirs: list[str],
+    llm_provider: str | None,
+    llm_command_json: str | None,
+    max_steps: int | None,
+) -> int:
+    summary = run_llm_orchestrated_loop(
+        root=root,
+        config_path=config_path,
+        dataset_path=dataset_path,
+        out_dir=out_dir,
+        include_real=include_real,
+        skill_dirs=skill_dirs,
+        provider_name=llm_provider,
+        provider_command=load_provider_command_json(llm_command_json),
+        max_steps=max_steps,
+    )
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0 if summary["status"] == "pass" else 1
 
 
 def _shell_quote(value: str) -> str:

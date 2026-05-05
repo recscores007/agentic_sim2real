@@ -9,7 +9,8 @@ one-off agent roles.
 
 | Agent | Owns | Cannot Do |
 | --- | --- | --- |
-| `orchestrator_agent` | skill order, config wiring, evidence bundle | bypass validators |
+| `llm_orchestrator` | choose the next skill from context, scorecards, and manifest catalog | bypass validators, run missing dependencies, approve hardware |
+| `orchestrator_agent` | config wiring, evidence bundle, deterministic preflight | bypass validators |
 | `evaluator_agent` | real-data quality gates, canonical record checks, scored evidence | invent candidate parameters |
 | `sim_agent` | Isaac Lab task checks, policy artifact audit, sim runs | approve real robot motion |
 | `perception_agent` | object pose repeatability and calibration evidence | hide camera/calibration failures |
@@ -19,5 +20,5 @@ one-off agent roles.
 | `critic_agent` | regression comparison and evidence review | generate the candidate it reviews |
 | `safety_agent` | release gate and human gate | set `safe_to_autorun_robot` true |
 
-The release rule is simple: every release-blocking skill must pass, and real
-robot execution remains human-gated.
+The release rule is simple: the LLM may choose skill calls, but every
+release-blocking skill must pass, and real robot execution remains human-gated.

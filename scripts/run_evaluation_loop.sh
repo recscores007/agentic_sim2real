@@ -16,3 +16,4 @@ python3 -m agentic_sim2real.cli --config "${AGENTIC_SIM2REAL_CONFIG}" run-evalua
 echo
 echo "Evaluation trace:"
 echo "  ${OUT}/evaluation_trace.md"
+echo "  ${OUT}/harness/llm_orchestrator/journal.jsonl"

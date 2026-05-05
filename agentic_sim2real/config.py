@@ -47,6 +47,15 @@ DEFAULTS: dict[str, Any] = {
         "max_recommended_delay_steps": 8,
         "precision_task": True,
     },
+    "llm_orchestrator": {
+        "provider": "scripted",
+        "command": [],
+        "model": "",
+        "max_steps": 32,
+        "max_invalid_decisions": 3,
+        "allow_retries": False,
+        "budget_skill_calls": 24,
+    },
     "sysid": {
         "sysid_backend_preference": ["newton", "pace", "local"],
         "newton_enabled": False,
@@ -95,6 +104,7 @@ class PipelineConfig:
     perception: dict[str, Any] = field(default_factory=dict)
     isaac_ros: dict[str, Any] = field(default_factory=dict)
     agent: dict[str, Any] = field(default_factory=dict)
+    llm_orchestrator: dict[str, Any] = field(default_factory=dict)
     sysid: dict[str, Any] = field(default_factory=dict)
     safety: dict[str, Any] = field(default_factory=dict)
 
@@ -105,6 +115,7 @@ class PipelineConfig:
             "perception": self.perception,
             "isaac_ros": self.isaac_ros,
             "agent": self.agent,
+            "llm_orchestrator": self.llm_orchestrator,
             "sysid": self.sysid,
             "safety": self.safety,
         }
@@ -119,6 +130,7 @@ def load_config(path: str | Path) -> PipelineConfig:
         perception=dict(merged["perception"]),
         isaac_ros=dict(merged["isaac_ros"]),
         agent=dict(merged["agent"]),
+        llm_orchestrator=dict(merged["llm_orchestrator"]),
         sysid=dict(merged["sysid"]),
         safety=dict(merged["safety"]),
     )

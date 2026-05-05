@@ -1,19 +1,20 @@
 # Agentic Sim2Real Skills
 
-This repo is a portable `agentic_sim2real` framework for skill-based
-sim2real workflows across embodiments such as manipulators, humanoids, and
-mobile manipulators. The UR10e gear assembly tutorial is the first concrete
-manipulator example, not the framework boundary.
+This repo is a portable `agentic_sim2real` framework for LLM-orchestrated,
+skill-based sim2real workflows across embodiments such as manipulators,
+humanoids, and mobile manipulators. The UR10e gear assembly tutorial is the
+first concrete manipulator example, not the framework boundary.
 
 The important change is this:
 
 ```text
-workflow step -> atomic skill -> agent runs skill -> harness validates skill -> release gate
+workflow step -> LLM chooses skill -> harness validates skill -> journal updates -> release gate
 ```
 
 Every skill has a manifest, input/output contract, validators, quality score,
-evidence files, and release-blocking flag. AutoResearch proposes improvements,
-but the validation harness decides whether they are good enough to release.
+evidence files, and release-blocking flag. The LLM orchestrator chooses the next
+skill from the catalog and writes a journal, but the validation harness decides
+whether each result is good enough to release.
 
 Real robot motion is never automatic. It remains human-gated.
 
@@ -44,6 +45,7 @@ The evaluator is the measurement and release system:
 | Component | What It Does | Can It Change Parameters? | Can It Approve Hardware? |
 | --- | --- | --- | --- |
 | Atomic skills | Run one bounded validation task and write evidence | No | No |
+| LLM orchestrator | Chooses the next valid skill from context, scorecards, and the manifest catalog | Proposes skill calls only | No |
 | AutoResearch agent | Propose experiments and candidate parameter updates | Proposes only | No |
 | Evaluator harness | Measures every skill, scores quality, records evidence | No | No |
 | Critic | Challenges weak evidence, warnings, regressions, and low confidence | No | No |
@@ -60,6 +62,55 @@ That means the repo is not just "agent runs scripts." It is an agentic
 sim2real system with explicit skill contracts, self-improvement proposals,
 deterministic validation, critic review, and a hard human gate before hardware.
 
+## LLM Orchestrator Runtime
+
+The runtime agent is now an LLM-style orchestrator. It receives:
+
+- task/config summary
+- dataset path
+- skill manifest catalog
+- completed scorecards
+- runnable skills whose dependencies are satisfied
+- guardrails for release and hardware approval
+
+At every step it must return a decision:
+
+```json
+{
+  "action": "run_skill",
+  "skill_id": "real_data_quality_gate",
+  "rationale": "Validate real logs before SysID.",
+  "expected_evidence": ["real_data_quality.json", "result.json"],
+  "risk_checks": ["records and calibration must be present"],
+  "confidence": 0.9
+}
+```
+
+Allowed actions are `run_skill`, `stop`, and `request_human_review`. The
+orchestrator is not trusted blindly. The guardrails reject invalid LLM choices:
+unknown skills, missing dependencies, repeated skills, early release gates, and
+hardware-facing skills without explicit real-robot approval.
+
+The default provider is `scripted`, a deterministic LLM test double for CI and
+goldens. To plug in a real LLM, use the command provider:
+
+```bash
+agentic-sim2real --config "$AGENTIC_SIM2REAL_CONFIG" run-llm-loop \
+  --dataset sample_data/real_log_demo.jsonl \
+  --out outputs/llm_run \
+  --llm-provider command \
+  --llm-command-json '["python3", "path/to/your_llm_agent.py", "--input", "{input}", "--output", "{output}"]'
+```
+
+The LLM command reads `AGENTIC_SIM2REAL_LLM_INPUT_JSON` and writes the decision
+JSON to `AGENTIC_SIM2REAL_LLM_OUTPUT_JSON`. Every decision is journaled in:
+
+```text
+outputs/<run>/llm_orchestrator/journal.jsonl
+outputs/<run>/llm_orchestrator/steps/step_###_context.json
+outputs/<run>/llm_orchestrator/steps/step_###_decision.json
+```
+
 ## Autorun And SysID Status
 
 If you provide a complete embodiment-scoped real-data session folder, the
@@ -73,12 +124,14 @@ embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>
 ```bash
 ./scripts/prepare_real_data.sh embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>
 DATASET=embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name> ./scripts/run_skill_harness.sh
+DATASET=embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name> ./scripts/run_llm_orchestrator.sh
 DATASET=embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name> ./scripts/run_evaluation_loop.sh
 ```
 
 That offline chain includes adapter-based data inspection, data alignment, a
-real-data quality gate, local SysID, optional Newton SysID, AutoResearch
-proposals, evaluator scoring, critic review, and release gate decision.
+real-data quality gate, LLM-selected skill calls, local SysID, optional
+Newton/PACE SysID, AutoResearch proposals, evaluator scoring, critic review,
+and release gate decision.
 
 It does not authorize unattended hardware. The real robot remains behind the
 human hardware gate, and `safe_to_autorun_robot` is always false.
@@ -261,8 +314,9 @@ embodiments/
 agentic_sim2real/
   adapters.py                   Embodiment adapter and real-data source contract
   data_quality.py                Pre-SysID quality gate for canonical records
+  llm_orchestrator.py            LLM decision loop, guardrails, journal
   skill_harness.py              Skill runner, validators, scoreboard, release gate
-  evaluation_loop.py            Agent/Evaluator/Critic/Release/Human trace
+  evaluation_loop.py            LLM/Agent/Evaluator/Critic/Release/Human trace
   autoresearch.py               Experiment planner
   sysid.py                      Sim-real gap and SysID recommendations
   metrics.py                    Delay, stiction, pose, contact metrics
@@ -271,8 +325,9 @@ agentic_sim2real/
 scripts/
   prepare_real_data.sh          Convert raw real_data session to records.jsonl
   run_skill_harness.sh          Default validation harness
+  run_llm_orchestrator.sh       LLM-selected skill loop and journal
   run_evaluation_loop.sh        Five-stage evaluation trace
-  run_autoresearch_loop.sh      Harness plus AutoResearch evidence path
+  run_autoresearch_loop.sh      LLM loop plus AutoResearch evidence path
   isaaclab_train.sh             Tutorial training wrapper
   ros_preflight.sh              ROS validation helper
   real_robot_human_gate.sh      Human-gated action sender
@@ -329,10 +384,11 @@ move the robot.
 
 ```text
 real logs
-  -> skill metrics
+  -> LLM orchestrator selects next skill
+  -> skill metrics and scorecards
   -> AutoResearch hypotheses
   -> candidate parameter changes
-  -> validation harness
+  -> validation harness and journal
   -> critic regression
   -> release gate
   -> human review
@@ -359,6 +415,7 @@ The repo now makes the evaluator architecture explicit:
 
 ```text
 Agent proposes.
+LLM orchestrator chooses skills.
 Evaluator measures.
 Critic challenges.
 Release gate decides.
@@ -368,7 +425,7 @@ Human approves hardware.
 This is the core evaluator feature. It separates proposing from measuring and
 approval:
 
-- the agent creates a candidate
+- the agent creates a candidate and chooses the next skill call
 - the evaluator measures the candidate against thresholds
 - the critic looks for reasons the evidence is weak
 - the release gate applies pass/fail policy
@@ -394,6 +451,8 @@ Outputs:
 ```text
 outputs/evaluation_demo/
   agent_proposal.json
+  harness/llm_orchestrator/journal.jsonl
+  harness/scoreboard.json
   evaluator_measurements.json
   critic_challenges.json
   release_decision.json
@@ -407,6 +466,7 @@ What each role owns:
 | Stage | Code | Authority |
 | --- | --- | --- |
 | Agent proposes | `agentic_sim2real/autoresearch.py` | Creates hypotheses and candidate parameter families |
+| LLM orchestrator chooses | `agentic_sim2real/llm_orchestrator.py` | Chooses valid skill calls from manifest/context; cannot bypass guardrails |
 | Evaluator measures | `agentic_sim2real/skill_harness.py` | Runs deterministic skills and writes metrics/evidence |
 | Critic challenges | `agentic_sim2real/evaluation_loop.py` | Flags low confidence, warnings, regressions, and failed skills |
 | Release gate decides | `agentic_sim2real/evaluation_loop.py` | Blocks or promotes to human review; never autoruns robot |
@@ -720,7 +780,37 @@ outputs/harness_demo/
 The default harness skips `real_robot_gate`, because hardware requires human
 approval.
 
-### 5. Inspect the scoreboard
+### 5. Run the LLM-orchestrated loop
+
+```bash
+./scripts/run_llm_orchestrator.sh
+```
+
+Equivalent CLI:
+
+```bash
+agentic-sim2real --config "$AGENTIC_SIM2REAL_CONFIG" run-llm-loop \
+  --root . \
+  --dataset sample_data/real_log_demo.jsonl \
+  --out outputs/llm_orchestrator_demo
+```
+
+Expected outputs:
+
+```text
+outputs/llm_orchestrator_demo/
+  llm_orchestrator/journal.jsonl
+  llm_orchestrator/orchestrator_summary.json
+  llm_orchestrator/steps/step_###_context.json
+  llm_orchestrator/steps/step_###_decision.json
+  scoreboard.json
+  release_candidate.json
+```
+
+The default `scripted` provider is deterministic. Use `--llm-provider command`
+to delegate each decision to a real LLM adapter.
+
+### 6. Inspect the scoreboard
 
 ```bash
 cat outputs/harness_demo/scoreboard.json
@@ -728,7 +818,7 @@ cat outputs/harness_demo/scoreboard.json
 
 Release status is pass only if every release-blocking offline skill passes.
 
-### 6. Run only one skill
+### 7. Run only one skill
 
 ```bash
 agentic-sim2real --config "$AGENTIC_SIM2REAL_CONFIG" run-harness \
@@ -740,7 +830,7 @@ agentic-sim2real --config "$AGENTIC_SIM2REAL_CONFIG" run-harness \
 
 Use this while developing or debugging one skill.
 
-### 7. Run AutoResearch loop
+### 8. Run AutoResearch loop
 
 ```bash
 ./scripts/run_autoresearch_loop.sh
@@ -967,6 +1057,7 @@ PYTHONPATH=. python3 -m unittest discover -s tests
 PYTHONPATH=. python3 -m agentic_sim2real.cli --config configs/ur10e_gear_assembly.example.json inspect-real-data --session embodiments/manipulator/ur10e_gear_assembly/real_data/example_session --root .
 PYTHONPATH=. python3 -m agentic_sim2real.cli --config configs/ur10e_gear_assembly.example.json validate-skills --root .
 PYTHONPATH=. python3 -m agentic_sim2real.cli --config configs/ur10e_gear_assembly.example.json run-harness --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/agentic_sim2real_harness
+PYTHONPATH=. python3 -m agentic_sim2real.cli --config configs/ur10e_gear_assembly.example.json run-llm-loop --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/agentic_sim2real_llm
 PYTHONPATH=. python3 -m agentic_sim2real.cli --config configs/ur10e_gear_assembly.example.json run-evaluation-loop --root . --dataset sample_data/real_log_demo.jsonl --out /tmp/agentic_sim2real_eval
 bash -n scripts/*.sh
 ```

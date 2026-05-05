@@ -1,9 +1,10 @@
 # Evaluator Architecture
 
-This repo uses a five-role evaluation loop:
+This repo uses an LLM-orchestrated evaluation loop:
 
 ```text
 Agent proposes.
+LLM orchestrator chooses skills.
 Evaluator measures.
 Critic challenges.
 Release gate decides.
@@ -24,10 +25,29 @@ The proposal is written to `agent_proposal.json`.
 
 The agent cannot pass itself, relax safety gates, or run the real robot.
 
+## 1.5. LLM Orchestrator Chooses Skills
+
+The LLM orchestrator reads the task context, manifest catalog, completed
+scorecards, and runnable skills. It proposes one action at a time:
+
+- `run_skill`
+- `stop`
+- `request_human_review`
+
+Guardrails reject invalid decisions before any skill runs:
+
+- missing dependencies
+- unknown skills
+- repeated skills unless retries are explicitly enabled
+- release gates before required evidence exists
+- hardware-facing skills without explicit approval
+
+The orchestrator writes `llm_orchestrator/journal.jsonl`.
+
 ## 2. Evaluator Measures
 
-The evaluator is deterministic. It runs skill validators, computes metrics, and
-writes evidence.
+The evaluator is deterministic. It executes the LLM-selected skill, runs
+validators, computes metrics, and writes evidence.
 
 Examples:
 

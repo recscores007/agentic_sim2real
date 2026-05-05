@@ -192,6 +192,36 @@ def run_harness(
     only_skill: str | None = None,
     skill_dirs: list[str | Path] | None = None,
 ) -> dict[str, Any]:
+    ctx, manifests = prepare_harness(
+        root=root,
+        config_path=config_path,
+        dataset_path=dataset_path,
+        out_dir=out_dir,
+        include_real=include_real,
+        skill_dirs=skill_dirs,
+    )
+    ordered = ordered_skill_ids(manifests)
+    if only_skill:
+        ordered = [skill_id for skill_id in ordered if skill_id == only_skill]
+        if not ordered:
+            raise ValueError(f"Unknown skill: {only_skill}")
+
+    results: dict[str, SkillResult] = {}
+    ctx.skill_dir.mkdir(parents=True, exist_ok=True)
+    for skill_id in ordered:
+        results[skill_id] = run_skill_step(manifests, ctx, skill_id, results)
+
+    return write_harness_artifacts(ctx, manifests, results)
+
+
+def prepare_harness(
+    root: str | Path,
+    config_path: str | Path,
+    dataset_path: str | Path,
+    out_dir: str | Path,
+    include_real: bool = False,
+    skill_dirs: list[str | Path] | None = None,
+) -> tuple[HarnessContext, dict[str, SkillManifest]]:
     root_path = Path(root).resolve()
     resolved_config_path = Path(config_path).expanduser().resolve()
     resolved_dataset_path = ensure_aligned_dataset(dataset_path, root=root_path).resolve()
@@ -210,42 +240,54 @@ def run_harness(
         errors = validate_manifest(manifest)
         if errors:
             raise ValueError(f"{manifest.skill_id}: invalid manifest: {errors}")
+    return ctx, manifests
 
-    ordered = _topological_order(manifests)
-    if only_skill:
-        ordered = [skill_id for skill_id in ordered if skill_id == only_skill]
-        if not ordered:
-            raise ValueError(f"Unknown skill: {only_skill}")
 
-    results: dict[str, SkillResult] = {}
-    ctx.skill_dir.mkdir(parents=True, exist_ok=True)
-    for skill_id in ordered:
-        manifest = manifests[skill_id]
-        skill_out = ctx.skill_dir / skill_id
-        skill_out.mkdir(parents=True, exist_ok=True)
+def ordered_skill_ids(manifests: dict[str, SkillManifest]) -> list[str]:
+    return _topological_order(manifests)
 
-        if manifest.real_robot and not include_real:
-            result = SkillResult(
-                skill_id=skill_id,
-                status="skip",
-                quality_score=1.0,
-                confidence=1.0,
-                warnings=["real robot skill skipped by default harness; run with --include-real after human approval"],
-                human_required=manifest.human_required,
-                release_blocking=manifest.release_blocking,
-            )
-        else:
-            result = _run_one(manifest, ctx, skill_out, results)
-            result.human_required = manifest.human_required
-            result.release_blocking = manifest.release_blocking
-            result = _apply_quality_gate(manifest, result)
 
-        (skill_out / "result.json").write_text(json.dumps(result.to_dict(), indent=2, sort_keys=True) + "\n")
-        results[skill_id] = result
+def run_skill_step(
+    manifests: dict[str, SkillManifest],
+    ctx: HarnessContext,
+    skill_id: str,
+    previous_results: dict[str, SkillResult],
+) -> SkillResult:
+    if skill_id not in manifests:
+        raise ValueError(f"Unknown skill: {skill_id}")
+    manifest = manifests[skill_id]
+    skill_out = ctx.skill_dir / skill_id
+    skill_out.mkdir(parents=True, exist_ok=True)
 
-    scoreboard = _scoreboard(results, manifests)
-    (out / "scoreboard.json").write_text(json.dumps(scoreboard, indent=2, sort_keys=True) + "\n")
-    (out / "release_candidate.json").write_text(
+    if manifest.real_robot and not ctx.include_real:
+        result = SkillResult(
+            skill_id=skill_id,
+            status="skip",
+            quality_score=1.0,
+            confidence=1.0,
+            warnings=["real robot skill skipped by default harness; run with --include-real after human approval"],
+            human_required=manifest.human_required,
+            release_blocking=manifest.release_blocking,
+        )
+    else:
+        result = _run_one(manifest, ctx, skill_out, previous_results)
+        result.human_required = manifest.human_required
+        result.release_blocking = manifest.release_blocking
+        result = _apply_quality_gate(manifest, result)
+
+    (skill_out / "result.json").write_text(json.dumps(result.to_dict(), indent=2, sort_keys=True) + "\n")
+    return result
+
+
+def write_harness_artifacts(
+    ctx: HarnessContext,
+    manifests: dict[str, SkillManifest],
+    results: dict[str, SkillResult],
+    require_all_release_blocking: bool = False,
+) -> dict[str, Any]:
+    scoreboard = _scoreboard(results, manifests, require_all_release_blocking=require_all_release_blocking)
+    (ctx.out_dir / "scoreboard.json").write_text(json.dumps(scoreboard, indent=2, sort_keys=True) + "\n")
+    (ctx.out_dir / "release_candidate.json").write_text(
         json.dumps(_release_candidate(results, scoreboard), indent=2, sort_keys=True) + "\n"
     )
     return scoreboard
@@ -453,7 +495,11 @@ def _topological_order(manifests: dict[str, SkillManifest]) -> list[str]:
     return ordered
 
 
-def _scoreboard(results: dict[str, SkillResult], manifests: dict[str, SkillManifest]) -> dict[str, Any]:
+def _scoreboard(
+    results: dict[str, SkillResult],
+    manifests: dict[str, SkillManifest],
+    require_all_release_blocking: bool = False,
+) -> dict[str, Any]:
     blocking_failures = []
     scores = []
     for skill_id, result in results.items():
@@ -461,6 +507,10 @@ def _scoreboard(results: dict[str, SkillResult], manifests: dict[str, SkillManif
             scores.append(result.quality_score)
         if manifests[skill_id].release_blocking and result.status == "fail":
             blocking_failures.append({"skill_id": skill_id, "failures": result.blocking_failures})
+    if require_all_release_blocking:
+        for skill_id, manifest in sorted(manifests.items()):
+            if manifest.release_blocking and skill_id not in results:
+                blocking_failures.append({"skill_id": skill_id, "failures": ["release-blocking skill did not run"]})
     quality = sum(scores) / len(scores) if scores else 0.0
     return {
         "status": "pass" if not blocking_failures else "fail",

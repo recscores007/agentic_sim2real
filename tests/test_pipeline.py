@@ -12,6 +12,7 @@ from agentic_sim2real.data_quality import evaluate_real_data_quality
 from agentic_sim2real.dataset import load_records
 from agentic_sim2real.embodiments import validate_embodiments
 from agentic_sim2real.evaluation_loop import run_evaluation_loop
+from agentic_sim2real.llm_orchestrator import LLMProvider, ScriptedLLMProvider, run_llm_orchestrated_loop
 from agentic_sim2real.preflight import run_preflight
 from agentic_sim2real.real_data import inspect_real_session, prepare_real_session
 from agentic_sim2real.skill_harness import run_harness, validate_all_manifests
@@ -186,8 +187,95 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("critic_challenges", trace)
             self.assertIn("release_gate_decides", trace)
             self.assertIn("human_approves_hardware", trace)
+            self.assertIn("llm_orchestrator", trace)
+            self.assertEqual(trace["llm_orchestrator"]["provider"], "scripted")
             self.assertFalse(trace["release_gate_decides"]["safe_to_autorun_robot"])
             self.assertTrue((Path(tmp) / "evaluation_trace.md").exists())
+
+    def test_llm_orchestrator_runs_skills_and_writes_journal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = run_llm_orchestrated_loop(
+                root=ROOT,
+                config_path=ROOT / "configs" / "ur10e_gear_assembly.example.json",
+                dataset_path=ROOT / "sample_data" / "real_log_demo.jsonl",
+                out_dir=tmp,
+            )
+            self.assertEqual(summary["status"], "pass")
+            self.assertEqual(summary["provider"], "scripted")
+            self.assertIn("release_candidate_gate", summary["completed_skill_ids"])
+            self.assertIn("real_robot_gate", summary["completed_skill_ids"])
+            journal = Path(summary["journal"])
+            self.assertTrue(journal.exists())
+            lines = [json.loads(line) for line in journal.read_text().splitlines()]
+            self.assertGreaterEqual(len(lines), 15)
+            self.assertEqual(lines[0]["status"], "skill_completed")
+
+    def test_llm_orchestrator_rejects_invalid_release_gate_call(self) -> None:
+        class BadReleaseThenScriptedProvider(LLMProvider):
+            name = "bad_release_then_scripted"
+
+            def __init__(self) -> None:
+                self.scripted = ScriptedLLMProvider()
+
+            def decide(self, context: dict) -> dict:
+                if int(context["step"]) == 1:
+                    return {
+                        "action": "run_skill",
+                        "skill_id": "release_candidate_gate",
+                        "rationale": "bad early release decision",
+                        "confidence": 0.9,
+                    }
+                return self.scripted.decide(context)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = run_llm_orchestrated_loop(
+                root=ROOT,
+                config_path=ROOT / "configs" / "ur10e_gear_assembly.example.json",
+                dataset_path=ROOT / "sample_data" / "real_log_demo.jsonl",
+                out_dir=tmp,
+                provider=BadReleaseThenScriptedProvider(),
+            )
+            self.assertEqual(summary["status"], "pass")
+            lines = [json.loads(line) for line in Path(summary["journal"]).read_text().splitlines()]
+            self.assertEqual(lines[0]["status"], "rejected")
+            self.assertTrue(
+                any("release_candidate_gate cannot run" in reason for reason in lines[0]["guardrail"]["reasons"])
+            )
+
+    def test_llm_orchestrator_command_provider_runs_decisions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            runner = tmp_path / "fake_llm.py"
+            runner.write_text(
+                "\n".join(
+                    [
+                        "import json",
+                        "import os",
+                        "from pathlib import Path",
+                        "ctx = json.loads(Path(os.environ['AGENTIC_SIM2REAL_LLM_INPUT_JSON']).read_text())",
+                        "out = Path(os.environ['AGENTIC_SIM2REAL_LLM_OUTPUT_JSON'])",
+                        "runnable = ctx.get('runnable_skills', [])",
+                        "if runnable:",
+                        "    decision = {'action': 'run_skill', 'skill_id': runnable[0], 'rationale': 'fake llm picked first runnable', 'confidence': 0.91}",
+                        "elif 'release_candidate_gate' in ctx.get('completed_skill_ids', []) and 'real_robot_gate' in ctx.get('completed_skill_ids', []):",
+                        "    decision = {'action': 'request_human_review', 'rationale': 'fake llm sees release evidence', 'confidence': 0.91}",
+                        "else:",
+                        "    decision = {'action': 'stop', 'rationale': 'nothing runnable', 'confidence': 0.5}",
+                        "out.write_text(json.dumps(decision) + '\\n')",
+                    ]
+                )
+                + "\n"
+            )
+            summary = run_llm_orchestrated_loop(
+                root=ROOT,
+                config_path=ROOT / "configs" / "ur10e_gear_assembly.example.json",
+                dataset_path=ROOT / "sample_data" / "real_log_demo.jsonl",
+                out_dir=tmp_path / "out",
+                provider_name="command",
+                provider_command=["python3", str(runner)],
+            )
+            self.assertEqual(summary["status"], "pass")
+            self.assertEqual(summary["provider"], "command")
 
     def test_prepare_real_data_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

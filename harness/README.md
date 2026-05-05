@@ -18,6 +18,17 @@ Default command:
 ./scripts/run_skill_harness.sh
 ```
 
+LLM-orchestrated command:
+
+```bash
+./scripts/run_llm_orchestrator.sh
+```
+
+The LLM loop asks a provider for the next skill decision, validates that
+decision against dependencies and safety guardrails, runs the selected skill
+through the same deterministic harness, then appends the decision/result to
+`llm_orchestrator/journal.jsonl`.
+
 Outputs:
 
 ```text
@@ -95,7 +106,7 @@ IsaacLab-Newton is represented by the portable `newton_sysid` skill. It is
 skipped by default, runs only when `config.sysid.newton_command` is configured,
 and can be made mandatory with `config.sysid.require_newton=true`.
 
-## Five-Stage Evaluation
+## LLM-Orchestrated Evaluation
 
 Use the evaluation loop when you want the repo to explain the decision process,
 not just run the skill DAG:
@@ -121,6 +132,7 @@ Meaning:
 | Stage | Output | Purpose |
 | --- | --- | --- |
 | Agent proposes | `agent_proposal.json` | AutoResearch hypotheses and candidate parameter families |
+| LLM orchestrator chooses | `harness/llm_orchestrator/journal.jsonl` | Stepwise skill decisions with guardrail results |
 | Evaluator measures | `evaluator_measurements.json` | Skill metrics, scores, and evidence files |
 | Critic challenges | `critic_challenges.json` | Low-confidence evidence, warnings, regressions, and failures |
 | Release gate decides | `release_decision.json` | Block or promote to human review |
