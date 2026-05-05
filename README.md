@@ -584,6 +584,15 @@ Each skill writes:
 }
 ```
 
+The UI also converts `quality_score` and `confidence` into action guidance:
+
+| Field | Meaning | Pipeline Action | User Action |
+| --- | --- | --- | --- |
+| `quality_score` | Did the validator produce useful evidence? | Low quality blocks or weakens promotion. | Improve the artifact, data, or config that the skill validated. |
+| `confidence` | How much evidence supports the result? | Low confidence stays smoke/review-only or becomes a critic observation. | Collect more episodes, pose samples, labels, rollout metrics, or backend SysID evidence. |
+| `pipeline_action` | What the harness should do next. | Proceed, validate candidate, use fallback, block, or stop before hardware. | None directly; this is the automated lane. |
+| `user_action` | What the human/operator should supply or approve. | The pipeline waits when the action is required. | Configure Newton/PACE, provide rollout metrics, improve real data, review policy artifacts, or approve hardware. |
+
 ## How AutoResearch Is Used
 
 AutoResearch is the experiment designer and self-improvement loop. It does not

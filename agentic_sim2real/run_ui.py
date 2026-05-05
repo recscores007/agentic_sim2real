@@ -211,14 +211,7 @@ def _rollout_summary(rollout_data: dict[str, Any]) -> dict[str, Any]:
 def _scoreboard_summary(scoreboard: dict[str, Any]) -> dict[str, Any]:
     skills = scoreboard.get("skills", {})
     skill_rows = [
-        {
-            "skill_id": skill_id,
-            "status": result.get("status"),
-            "quality_score": result.get("quality_score"),
-            "confidence": result.get("confidence"),
-            "release_blocking": result.get("release_blocking"),
-            "human_required": result.get("human_required"),
-        }
+        _skill_row(skill_id, result)
         for skill_id, result in sorted(skills.items())
     ]
     agentic_rows = [
@@ -235,6 +228,7 @@ def _scoreboard_summary(scoreboard: dict[str, Any]) -> dict[str, Any]:
         for row in skill_rows
         if row["skill_id"] not in AGENTIC_PROPOSAL_SKILLS
     ]
+    recommended_actions = _recommended_actions(scoreboard, skill_rows)
     return {
         "status": scoreboard.get("status"),
         "release_profile": scoreboard.get("release_profile"),
@@ -246,11 +240,272 @@ def _scoreboard_summary(scoreboard: dict[str, Any]) -> dict[str, Any]:
         "hardware_approval_status": scoreboard.get("hardware_approval_status"),
         "safe_to_autorun_robot": False,
         "blocking_failures": scoreboard.get("blocking_failures", []),
+        "recommended_actions": recommended_actions,
         "nondeterministic_coverage": NONDETERMINISTIC_COVERAGE,
         "agentic_proposal_skills": agentic_rows,
         "deterministic_validation_skills": deterministic_rows,
         "skills": skill_rows,
     }
+
+
+def _skill_row(skill_id: str, result: dict[str, Any]) -> dict[str, Any]:
+    row = {
+        "skill_id": skill_id,
+        "status": result.get("status"),
+        "quality_score": result.get("quality_score"),
+        "confidence": result.get("confidence"),
+        "release_blocking": result.get("release_blocking"),
+        "human_required": result.get("human_required"),
+        "warnings": result.get("warnings", []),
+        "blocking_failures": result.get("blocking_failures", []),
+    }
+    row.update(_skill_action_guidance(skill_id, result))
+    return row
+
+
+def _skill_action_guidance(skill_id: str, result: dict[str, Any]) -> dict[str, str]:
+    status = str(result.get("status") or "pending")
+    quality = _float_or_none(result.get("quality_score"))
+    confidence = _float_or_none(result.get("confidence"))
+    release_blocking = bool(result.get("release_blocking", False))
+    warnings = [str(item) for item in result.get("warnings", [])]
+    failures = [str(item) for item in result.get("blocking_failures", [])]
+
+    guidance = {
+        "action_level": "review",
+        "quality_meaning": _quality_meaning(status, quality),
+        "confidence_meaning": _confidence_meaning(status, confidence),
+        "pipeline_action": "Hold this result for review.",
+        "user_action": "Inspect the skill evidence if this affects your release decision.",
+    }
+
+    if status == "fail":
+        guidance.update(
+            {
+                "action_level": "blocked",
+                "pipeline_action": "Block release promotion until this skill passes.",
+                "user_action": failures[0] if failures else "Fix the failing validator and rerun this skill.",
+            }
+        )
+    elif status == "evidence_missing":
+        if skill_id == "newton_sysid":
+            guidance.update(
+                {
+                    "action_level": "configure_backend",
+                    "pipeline_action": "Use local SysID fallback in smoke runs; require Newton only when the release profile demands physics SysID.",
+                    "user_action": "Set sysid.newton_enabled plus sysid.newton_root or sysid.newton_command to get fitted Newton parameters.",
+                }
+            )
+        elif skill_id == "pace_sysid":
+            guidance.update(
+                {
+                    "action_level": "configure_backend",
+                    "pipeline_action": "Keep PACE as backup only; continue with Newton or local SysID when allowed.",
+                    "user_action": "Set sysid.pace_enabled plus sysid.pace_root or sysid.pace_command if Newton is unavailable.",
+                }
+            )
+        else:
+            guidance.update(
+                {
+                    "action_level": "missing_evidence",
+                    "pipeline_action": "Block release if this skill is release-blocking; otherwise continue with a warning.",
+                    "user_action": warnings[0] if warnings else "Provide the missing evidence and rerun.",
+                }
+            )
+    elif status == "not_applicable":
+        guidance.update(
+            {
+                "action_level": "not_applicable",
+                "pipeline_action": "Ignore for this run profile; do not count it as positive release evidence.",
+                "user_action": "Configure this skill only if you are moving from smoke review to release-candidate review.",
+            }
+        )
+        if skill_id == "isaaclab_rollout_regression":
+            guidance["user_action"] = "Provide isaac_lab.rollout_command or isaac_lab.rollout_metrics_path for true policy-release validation."
+    elif status == "not_approved":
+        guidance.update(
+            {
+                "action_level": "human_approval_required",
+                "pipeline_action": "Stop before any real robot command; safe_to_autorun_robot remains false.",
+                "user_action": "Human must review evidence and explicitly approve supervised hardware execution.",
+            }
+        )
+    elif status == "pass":
+        if confidence is not None and confidence < 0.5:
+            guidance.update(
+                {
+                    "action_level": "collect_more_data",
+                    "pipeline_action": "Treat as weak evidence; do not auto-promote beyond smoke review.",
+                    "user_action": "Collect more real records, labels, or repeatability samples, then rerun.",
+                }
+            )
+        elif confidence is not None and confidence <= 0.5:
+            guidance.update(
+                {
+                    "action_level": "minimum_evidence",
+                    "pipeline_action": "Proceed through smoke validation, but keep this as a critic observation.",
+                    "user_action": "Collect stronger data before release-candidate review.",
+                }
+            )
+        elif quality is not None and quality < 0.75:
+            guidance.update(
+                {
+                    "action_level": "improve_quality",
+                    "pipeline_action": "Proceed only if downstream gates accept the evidence.",
+                    "user_action": "Improve the evidence quality and rerun if this is intended for release.",
+                }
+            )
+        elif skill_id in AGENTIC_PROPOSAL_SKILLS:
+            guidance.update(
+                {
+                    "action_level": "validate_candidate",
+                    "pipeline_action": "Use this as a candidate proposal, then validate with regression and gates.",
+                    "user_action": "Review the proposed parameters before using them for training or release.",
+                }
+            )
+        else:
+            guidance.update(
+                {
+                    "action_level": "proceed",
+                    "pipeline_action": "Feed this passing evidence to dependent skills and release gates.",
+                    "user_action": "No immediate action unless warnings or human review apply.",
+                }
+            )
+
+    if status == "pass" and warnings:
+        guidance["user_action"] = _warning_action(skill_id, warnings, guidance["user_action"])
+    if release_blocking and guidance["action_level"] in {"blocked", "missing_evidence", "collect_more_data"}:
+        guidance["pipeline_action"] += " This is release-blocking."
+    return guidance
+
+
+def _recommended_actions(scoreboard: dict[str, Any], skill_rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    actions: list[dict[str, str]] = []
+    if scoreboard.get("status") == "fail":
+        actions.append(
+            {
+                "owner": "Pipeline",
+                "priority": "blocked",
+                "action": "Do not promote this run.",
+                "reason": "One or more release-blocking skills failed or are missing required evidence.",
+            }
+        )
+    elif scoreboard.get("human_review_readiness") == "smoke_review_only":
+        actions.append(
+            {
+                "owner": "Pipeline",
+                "priority": "review",
+                "action": "Treat this as smoke/offline review only.",
+                "reason": "The run is not a release-candidate approval package yet.",
+            }
+        )
+
+    for row in skill_rows:
+        skill_id = str(row["skill_id"])
+        status = str(row.get("status"))
+        confidence = _float_or_none(row.get("confidence"))
+        warnings = [str(item) for item in row.get("warnings", [])]
+        if status == "not_approved" and skill_id == "real_robot_gate":
+            actions.append(
+                {
+                    "owner": "Human",
+                    "priority": "approval_required",
+                    "action": "Approve or reject supervised hardware execution.",
+                    "reason": "The pipeline never authorizes unattended robot motion.",
+                }
+            )
+        elif status == "evidence_missing" and skill_id in {"newton_sysid", "pace_sysid"}:
+            backend = "Newton" if skill_id == "newton_sysid" else "PACE"
+            actions.append(
+                {
+                    "owner": "User",
+                    "priority": "configure_backend",
+                    "action": f"Configure {backend} SysID if you need fitted physics parameters.",
+                    "reason": f"{skill_id} produced no fitted-parameter evidence in this run.",
+                }
+            )
+        elif status == "not_applicable" and skill_id == "isaaclab_rollout_regression":
+            actions.append(
+                {
+                    "owner": "User",
+                    "priority": "provide_rollout",
+                    "action": "Provide Isaac Lab rollout metrics or a rollout command for release-candidate validation.",
+                    "reason": "Smoke review can skip true rollout regression, but release review should not.",
+                }
+            )
+        elif status == "pass" and confidence is not None and confidence <= 0.5:
+            actions.append(
+                {
+                    "owner": "User",
+                    "priority": "collect_more_data",
+                    "action": f"Collect stronger evidence for {skill_id}.",
+                    "reason": f"Confidence is {confidence:.3f}, which is only at or below the auto-promotion floor.",
+                }
+            )
+        elif skill_id == "real_data_quality_gate" and warnings:
+            actions.append(
+                {
+                    "owner": "User",
+                    "priority": "improve_data",
+                    "action": "Add missing labels, held-out split, or richer joint/contact data before release review.",
+                    "reason": "The real-data gate passed but warned that some evidence is sparse.",
+                }
+            )
+        elif skill_id == "policy_artifact_audit" and warnings:
+            actions.append(
+                {
+                    "owner": "User",
+                    "priority": "replace_sample_policy",
+                    "action": "Replace sample policy artifacts with the real trained policy bundle.",
+                    "reason": "Sample artifacts are acceptable for smoke review, not for a real release package.",
+                }
+            )
+    return actions[:8]
+
+
+def _quality_meaning(status: str, quality: float | None) -> str:
+    if status in {"evidence_missing", "not_applicable", "not_approved"}:
+        return "No positive validation evidence was produced for this skill."
+    if status == "fail":
+        return "The validator failed; quality does not support release."
+    if quality is None:
+        return "No quality score was reported."
+    if quality >= 0.9:
+        return "Strong validator result."
+    if quality >= 0.75:
+        return "Usable validator result with some limitations."
+    if quality >= 0.5:
+        return "Weak validator result; improve before release."
+    return "Poor validator result; do not promote from this evidence."
+
+
+def _confidence_meaning(status: str, confidence: float | None) -> str:
+    if confidence is None:
+        return "No evidence-confidence score was reported."
+    if status in {"evidence_missing", "not_applicable", "not_approved"}:
+        return "This can mean the harness is confident about the skip/block, not that the skill succeeded."
+    if confidence >= 0.8:
+        return "Strong evidence coverage."
+    if confidence >= 0.6:
+        return "Moderate evidence coverage."
+    if confidence >= 0.5:
+        return "Minimum evidence coverage; collect more for release."
+    return "Low evidence coverage; treat as exploratory."
+
+
+def _warning_action(skill_id: str, warnings: list[str], fallback: str) -> str:
+    if skill_id == "real_data_quality_gate":
+        return "Resolve data warnings: add success labels, held-out episodes, joint velocities, calibration, or camera provenance as applicable."
+    if skill_id == "policy_artifact_audit":
+        return "Replace sample policy artifacts with the real trained policy bundle before release-candidate review."
+    return warnings[0] if warnings else fallback
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _trace_summary(trace: dict[str, Any]) -> dict[str, Any]:
@@ -370,15 +625,19 @@ th {{ color:var(--muted); font-size:12px; }}
 code {{ font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; }}
 .journal {{ display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px; }}
 .journal-item {{ border:1px solid var(--line); border-radius:8px; padding:9px; background:#fff; min-height:74px; }}
+.action-grid {{ display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; }}
+.action-card {{ border:1px solid var(--line); border-radius:8px; padding:11px; background:#fff; min-height:118px; }}
+.action-card b {{ display:block; margin:8px 0 6px; }}
+.table-wrap {{ overflow-x:auto; }}
 .note {{ color:var(--muted); line-height:1.45; }}
 @media (max-width:1050px) {{
   main,.lane-grid {{ grid-template-columns:1fr; }}
-  .metrics,.workflow,.journal {{ grid-template-columns:repeat(2, minmax(0, 1fr)); }}
+  .metrics,.workflow,.journal,.action-grid {{ grid-template-columns:repeat(2, minmax(0, 1fr)); }}
 }}
 @media (max-width:640px) {{
   header {{ padding:14px; }}
   main {{ padding:12px; }}
-  .metrics,.workflow,.journal,.subgrid {{ grid-template-columns:1fr; }}
+  .metrics,.workflow,.journal,.subgrid,.action-grid {{ grid-template-columns:1fr; }}
 }}
 </style>
 </head>
@@ -429,6 +688,18 @@ const metricHtml = `
     <div class="metric"><span>Real data</span><b>${{fmt(rollout.rollout_count)}} rollouts</b><div class="note">${{fmt(rollout.streams?.join(", "))}}</div></div>
     <div class="metric"><span>Run version</span><b>${{fmt(state.run.version)}}</b><div class="note">versioned audit record</div></div>
   </div>
+</section>`;
+
+const actionCards = (board.recommended_actions || []).map(item => `<div class="action-card">
+  <div>${{pill(item.owner || "Pipeline")}} ${{pill(item.priority || "review")}}</div>
+  <b>${{fmt(item.action)}}</b>
+  <div class="note">${{fmt(item.reason)}}</div>
+</div>`).join("");
+
+const actionHtml = `
+<section class="panel wide">
+  <h2>Recommended Actions</h2>
+  <div class="action-grid">${{actionCards || "<span class='note'>No immediate action. Keep evidence with the run record.</span>"}}</div>
 </section>`;
 
 const workflowHtml = `
@@ -496,35 +767,37 @@ const coverageRows = (board.nondeterministic_coverage || []).map(row => `<tr>
 
 const proposalSkills = (board.agentic_proposal_skills || []).map(row => `<tr>
   <td><code>${{row.skill_id}}</code></td>
-  <td>${{fmt(row.agentic_role)}}</td>
   <td>${{pill(row.status)}}</td>
-  <td>${{num(row.quality_score)}}</td>
-  <td>${{num(row.confidence)}}</td>
-  <td>${{fmt(row.why_agentic)}}</td>
+  <td>${{pill(row.action_level)}}<div class="note">${{fmt(row.agentic_role)}}</div></td>
+  <td>${{num(row.quality_score)}}<div class="note">${{fmt(row.quality_meaning)}}</div></td>
+  <td>${{num(row.confidence)}}<div class="note">${{fmt(row.confidence_meaning)}}</div></td>
+  <td>${{fmt(row.pipeline_action)}}</td>
+  <td>${{fmt(row.user_action)}}</td>
 </tr>`).join("");
 
 const deterministicSkills = (board.deterministic_validation_skills || []).map(row => `<tr>
   <td><code>${{row.skill_id}}</code></td>
   <td>${{pill(row.status)}}</td>
-  <td>${{num(row.quality_score)}}</td>
-  <td>${{num(row.confidence)}}</td>
-  <td>${{row.release_blocking ? "yes" : "no"}}</td>
-  <td>${{row.human_required ? "yes" : "no"}}</td>
+  <td>${{pill(row.action_level)}}<div class="note">${{row.release_blocking ? "release-blocking" : "non-blocking"}}; ${{row.human_required ? "human review" : "pipeline-owned"}}</div></td>
+  <td>${{num(row.quality_score)}}<div class="note">${{fmt(row.quality_meaning)}}</div></td>
+  <td>${{num(row.confidence)}}<div class="note">${{fmt(row.confidence_meaning)}}</div></td>
+  <td>${{fmt(row.pipeline_action)}}</td>
+  <td>${{fmt(row.user_action)}}</td>
 </tr>`).join("");
 
 const nondetHtml = `
 <section class="panel wide">
   <h2>Non-Deterministic Coverage</h2>
   <p class="note">The LLM-style part proposes, orders, critiques, or explains. The harness still validates through atomic evidence.</p>
-  <table><thead><tr><th>Responsibility</th><th>Covered by</th><th>Type</th><th>Related skill/artifact</th><th>Validation boundary</th></tr></thead><tbody>${{coverageRows}}</tbody></table>
+  <div class="table-wrap"><table><thead><tr><th>Responsibility</th><th>Covered by</th><th>Type</th><th>Related skill/artifact</th><th>Validation boundary</th></tr></thead><tbody>${{coverageRows}}</tbody></table></div>
   <h3 style="margin-top:14px">Proposal-Producing Atomic Skills</h3>
-  <table><thead><tr><th>Skill</th><th>Agentic role</th><th>Status</th><th>Score</th><th>Confidence</th><th>Why it is in this lane</th></tr></thead><tbody>${{proposalSkills || "<tr><td colspan='6' class='note'>No proposal-producing skills ran in this run.</td></tr>"}}</tbody></table>
+  <div class="table-wrap"><table><thead><tr><th>Skill</th><th>Status</th><th>Action level</th><th>Quality</th><th>Confidence</th><th>Pipeline action</th><th>User action</th></tr></thead><tbody>${{proposalSkills || "<tr><td colspan='7' class='note'>No proposal-producing skills ran in this run.</td></tr>"}}</tbody></table></div>
 </section>`;
 
 const deterministicHtml = `
 <section class="panel wide">
   <h2>Deterministic Validation Skills</h2>
-  <table><thead><tr><th>Skill</th><th>Status</th><th>Score</th><th>Confidence</th><th>Release blocking</th><th>Human required</th></tr></thead><tbody>${{deterministicSkills}}</tbody></table>
+  <div class="table-wrap"><table><thead><tr><th>Skill</th><th>Status</th><th>Action level</th><th>Quality</th><th>Confidence</th><th>Pipeline action</th><th>User action</th></tr></thead><tbody>${{deterministicSkills}}</tbody></table></div>
 </section>`;
 
 const journal = (state.journal || []).slice(-9).map(row => `<div class="journal-item">
@@ -535,6 +808,7 @@ const journal = (state.journal || []).slice(-9).map(row => `<div class="journal-
 
 document.getElementById("app").innerHTML = [
   metricHtml,
+  actionHtml,
   workflowHtml,
   `<div class="lane-grid">${{charHtml}}${{releaseHtml}}</div>`,
   recordHtml,

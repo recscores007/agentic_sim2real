@@ -282,6 +282,8 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("nondeterministic_coverage", state["scoreboard"])
             self.assertIn("agentic_proposal_skills", state["scoreboard"])
             self.assertIn("deterministic_validation_skills", state["scoreboard"])
+            self.assertIn("recommended_actions", state["scoreboard"])
+            self.assertGreaterEqual(len(state["scoreboard"]["recommended_actions"]), 1)
             proposal_ids = {
                 row["skill_id"]
                 for row in state["scoreboard"]["agentic_proposal_skills"]
@@ -289,6 +291,18 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("autoresearch_planner", proposal_ids)
             self.assertIn("domain_randomization_update", proposal_ids)
             self.assertIn("action_scale_sweep", proposal_ids)
+            for row in state["scoreboard"]["agentic_proposal_skills"]:
+                self.assertIn("pipeline_action", row)
+                self.assertIn("user_action", row)
+                self.assertIn("quality_meaning", row)
+                self.assertIn("confidence_meaning", row)
+            real_robot_row = next(
+                row
+                for row in state["scoreboard"]["deterministic_validation_skills"]
+                if row["skill_id"] == "real_robot_gate"
+            )
+            self.assertEqual(real_robot_row["action_level"], "human_approval_required")
+            self.assertIn("Human", real_robot_row["user_action"])
             artifacts = summary["scoreboard"]["artifacts"]
             for key in ["rollout_data", "pipeline_input", "scorecard", "pipeline_output", "run_record", "real_data_manifest", "ui", "state"]:
                 self.assertTrue(Path(artifacts[key]).exists())
