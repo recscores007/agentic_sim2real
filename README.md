@@ -62,6 +62,81 @@ That means the repo is not just "agent runs scripts." It is an agentic
 sim2real system with explicit skill contracts, self-improvement proposals,
 deterministic validation, critic review, and a hard human gate before hardware.
 
+## What The LLM Handles
+
+The LLM is used for the non-deterministic reasoning layer: triage, ordering,
+hypotheses, experiment planning, critique, and explanation. It is not the
+measurement layer and it is not the safety authority.
+
+Every LLM choice must reduce to one of these auditable objects:
+
+- a valid atomic skill call
+- a bounded candidate parameter proposal
+- a critic challenge tied to evidence
+- a report that cites generated evidence
+
+The deterministic harness then validates that object before anything can be
+released.
+
+| Non-Deterministic LLM Responsibility | What It Does | Why LLM Handles It | How It Is Atomically Validated |
+| --- | --- | --- | --- |
+| Gap triage | Decides whether the likely gap is perception, actuator, contact, latency, policy, deployment, or domain randomization | Real sim2real failures are messy and often have multiple plausible causes | User gap hints are recorded, then targeted skills such as `pose_repeatability`, `sysid_step_response`, `action_scale_sweep`, and `sim_eval_regression` produce metrics |
+| Skill ordering | Chooses which atomic skill to run next | Multiple valid investigation paths may exist | Guardrails allow only known skills with satisfied dependencies; each decision is written to `llm_orchestrator/journal.jsonl` |
+| Hypothesis generation | Proposes explanations such as "stiction is causing low action response" or "pose noise is dominating failures" | Diagnosis requires interpretation and creative comparison across evidence | The hypothesis must become a bounded parameter family and be tested by SysID, perception, DR, action-scale, or regression skills |
+| Experiment planning | Suggests Newton/PACE SysID, action-scale sweep, domain-randomization update, more logs, or a replay test | Good experiment order depends on context, cost, and missing evidence | Each experiment maps to a manifest-backed skill with declared inputs, outputs, validators, and pass/fail gates |
+| Critic role | Challenges weak evidence, sparse data, low confidence, skipped backends, or unsafe assumptions | Challenge quality is judgment-heavy and benefits from broad context | Critic output cannot approve release; the deterministic release gate treats unresolved challenges as blockers or warnings |
+| Report/explanation | Explains what was learned and what should happen next | Natural-language synthesis is useful for humans reviewing the run | Reports must cite scoreboards, evidence files, decisions, and release artifacts; reports have no authority to change gates |
+
+## How To Atomically Validate
+
+Atomic validation means every agentic claim is checked by the smallest
+relevant skill before it can affect release.
+
+```text
+LLM proposes one skill or hypothesis
+  -> guardrails check skill id, dependencies, and safety limits
+  -> harness runs the atomic skill
+  -> skill writes evidence and a quality score
+  -> evaluator records measurements
+  -> critic challenges weak evidence
+  -> release gate blocks or promotes to human review
+  -> human approves any hardware motion
+```
+
+Useful commands:
+
+```bash
+# Validate skill contracts.
+agentic-sim2real --config configs/ur10e_gear_assembly.example.json validate-skills --root .
+
+# Run one atomic validator against a dataset.
+agentic-sim2real --config configs/ur10e_gear_assembly.example.json run-harness \
+  --root . \
+  --dataset sample_data/real_log_demo.jsonl \
+  --out outputs/one_skill_pose_check \
+  --skill pose_repeatability
+
+# Let the LLM orchestrator choose skills, seeded by an initial gap hypothesis.
+agentic-sim2real --config configs/ur10e_gear_assembly.example.json run-llm-loop \
+  --root . \
+  --dataset sample_data/real_log_demo.jsonl \
+  --out outputs/llm_contact_triage \
+  --gap-hint contact
+```
+
+After any run, inspect:
+
+```text
+outputs/<run>/llm_orchestrator/journal.jsonl
+outputs/<run>/llm_orchestrator/steps/step_###_context.json
+outputs/<run>/llm_orchestrator/steps/step_###_decision.json
+outputs/<run>/scoreboard.json
+outputs/<run>/skills/<skill_id>/
+```
+
+The rule is simple: if the LLM cannot point to a skill result, metric,
+scoreboard entry, critic finding, or release decision, it is only a suggestion.
+
 ## LLM Orchestrator Runtime
 
 The runtime agent is now an LLM-style orchestrator. It receives:
