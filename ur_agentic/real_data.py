@@ -95,20 +95,20 @@ def prepare_real_session(
             stream.write(json.dumps(record, sort_keys=True) + "\n")
 
     summary = {
-        "session_dir": str(session),
+        "session_dir": _display_path(session),
         "records": len(records),
         "episodes": sorted({record["episode_index"] for record in records}),
-        "out": str(out),
+        "out": _display_path(out),
         "tolerance_s": tolerance_s,
         "missing_pose_matches": missing_pose_matches,
         "missing_contact_matches": missing_contact_matches,
         "missing_camera_matches": missing_camera_matches,
         "warnings": warnings,
-        "required_pipeline_file": str(out),
+        "required_pipeline_file": _display_path(out),
     }
     summary_path = out.parent / "prepare_summary.json"
+    summary["summary_path"] = _display_path(summary_path)
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
-    summary["summary_path"] = str(summary_path)
     return summary
 
 
@@ -198,3 +198,11 @@ def _clean_failure_mode(value: str | None) -> str | None:
     if text.lower() in {"none", "null", "success", "succeeded"}:
         return None
     return text
+
+
+def _display_path(path: Path) -> str:
+    resolved = path.expanduser().resolve()
+    try:
+        return str(resolved.relative_to(Path.cwd().resolve()))
+    except ValueError:
+        return str(resolved)

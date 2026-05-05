@@ -3,13 +3,14 @@
 Copy this folder for a new real-data session:
 
 ```bash
-cp -R real_data/templates real_data/ur10e_day1
+cp -R embodiments/manipulator/ur10e_gear_assembly/real_data/templates \
+  embodiments/manipulator/ur10e_gear_assembly/real_data/ur10e_day1
 ```
 
 Then replace the template rows with your real rows and run:
 
 ```bash
-./scripts/prepare_real_data.sh real_data/ur10e_day1
+./scripts/prepare_real_data.sh embodiments/manipulator/ur10e_gear_assembly/real_data/ur10e_day1
 ```
 
 The converter aligns rows by `episode_index` and nearest `timestamp`.

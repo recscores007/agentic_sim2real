@@ -1,26 +1,31 @@
 # Real Data Folder
 
-This folder is where you put real robot task data before running the agentic
-sim2real pipeline. The checked-in example is UR10e gear assembly, but the folder
-layout is meant to stay portable.
+This folder is where you put real robot task data for the UR10e gear assembly
+manipulator example before running the agentic sim2real pipeline.
+
+The same folder pattern should be repeated inside each embodiment:
+
+```text
+embodiments/<embodiment_type>/<embodiment_name>/real_data/
+```
 
 The pipeline needs one aligned file:
 
 ```text
-real_data/<session_name>/aligned/records.jsonl
+embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>/aligned/records.jsonl
 ```
 
 You can create it from raw subfolders with:
 
 ```bash
-./scripts/prepare_real_data.sh real_data/example_session
+./scripts/prepare_real_data.sh embodiments/manipulator/ur10e_gear_assembly/real_data/example_session
 ```
 
 Then run the skills and evaluator on that session:
 
 ```bash
-DATASET=real_data/example_session ./scripts/run_skill_harness.sh
-DATASET=real_data/example_session ./scripts/run_evaluation_loop.sh
+DATASET=embodiments/manipulator/ur10e_gear_assembly/real_data/example_session ./scripts/run_skill_harness.sh
+DATASET=embodiments/manipulator/ur10e_gear_assembly/real_data/example_session ./scripts/run_evaluation_loop.sh
 ```
 
 `load_records()` automatically looks for:
@@ -35,7 +40,7 @@ inside a session directory.
 ## Session Layout
 
 ```text
-real_data/<session_name>/
+embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>/
   camera_data/
     index.csv
     color/
@@ -98,12 +103,13 @@ The converter creates JSONL rows like:
 That is the format consumed by:
 
 ```bash
-ur-gear-agentic analyze --dataset real_data/<session_name> --out outputs/<session_name>
-ur-gear-agentic run-harness --dataset real_data/<session_name> --out outputs/<session_name>_harness
-ur-gear-agentic run-evaluation-loop --dataset real_data/<session_name> --out outputs/<session_name>_eval
+ur-gear-agentic analyze --dataset embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name> --out outputs/<session_name>
+ur-gear-agentic run-harness --dataset embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name> --out outputs/<session_name>_harness
+ur-gear-agentic run-evaluation-loop --dataset embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name> --out outputs/<session_name>_eval
 ```
 
 ## Templates
 
-Use `real_data/templates/` when creating a new collection session. It contains
-the expected CSV headers and example values.
+Use `embodiments/manipulator/ur10e_gear_assembly/real_data/templates/` when
+creating a new collection session. It contains the expected CSV headers and
+example values.

@@ -69,8 +69,10 @@ returns.
 
 ## Autorun Boundary
 
-A complete `real_data/<session_name>/` folder can drive the offline pipeline
+A complete embodiment-scoped real-data session can drive the offline pipeline
 without human intervention after it is converted to `aligned/records.jsonl`.
+For the UR manipulator example, use
+`embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>`.
 That includes skill execution, AutoResearch proposal, evaluator scoring, critic
 review, and release-gate output.
 

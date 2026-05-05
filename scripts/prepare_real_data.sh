@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/_env.sh"
 
-SESSION="${1:-${SCRIPT_DIR}/../real_data/example_session}"
+SESSION="${1:-${SCRIPT_DIR}/../embodiments/manipulator/ur10e_gear_assembly/real_data/example_session}"
 OUT="${2:-}"
 
 if [[ -n "${OUT}" ]]; then

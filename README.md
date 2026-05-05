@@ -62,13 +62,18 @@ deterministic validation, critic review, and a hard human gate before hardware.
 
 ## Autorun And SysID Status
 
-If you provide a complete `real_data/<session_name>/` folder, the pipeline can
-run the full offline validation chain without human intervention:
+If you provide a complete embodiment-scoped real-data session folder, the
+pipeline can run the full offline validation chain without human intervention.
+For the UR manipulator example, that path is:
+
+```text
+embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>
+```
 
 ```bash
-./scripts/prepare_real_data.sh real_data/<session_name>
-DATASET=real_data/<session_name> ./scripts/run_skill_harness.sh
-DATASET=real_data/<session_name> ./scripts/run_evaluation_loop.sh
+./scripts/prepare_real_data.sh embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>
+DATASET=embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name> ./scripts/run_skill_harness.sh
+DATASET=embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name> ./scripts/run_evaluation_loop.sh
 ```
 
 That offline chain includes data alignment, atomic skills, the current SysID
@@ -82,7 +87,7 @@ Current SysID status:
 
 | Question | Current Answer |
 | --- | --- |
-| Can the offline pipeline autorun from `real_data/<session_name>/`? | Yes, after `prepare_real_data.sh` creates or refreshes `aligned/records.jsonl`. |
+| Can the offline pipeline autorun from an embodiment real-data session? | Yes, after `prepare_real_data.sh` creates or refreshes `aligned/records.jsonl`. |
 | Can it autorun a physical robot with no human? | No. Hardware is intentionally human-gated. |
 | Is SysID currently using IsaacLab-Newton from `es-rl/IsaacLab-Newton`? | No. The current implementation is the local log-based estimator in `ur_agentic/sysid.py`. |
 | What does current SysID estimate? | Delay, stiction/deadband proxy, contact summary, pose noise, reset scatter, action-scale bounds, and domain-randomization recommendations. |
@@ -241,6 +246,11 @@ skills/                         Atomic skill contracts
 custom_skills/                  Drop-in local skill overrides
 examples/custom_skills/         Example external command-runner replacement skill
 
+embodiments/
+  manipulator/
+    ur10e_gear_assembly/
+      real_data/                UR example templates and sessions
+
 ur_agentic/
   skill_harness.py              Skill runner, validators, scoreboard, release gate
   evaluation_loop.py            Agent/Evaluator/Critic/Release/Human trace
@@ -259,7 +269,6 @@ scripts/
   real_robot_human_gate.sh      Human-gated action sender
 
 golden/sample_inputs/           Golden validation fixtures
-real_data/                      Real-data templates and example session
 sample_data/real_log_demo.jsonl Sample real-log schema
 agents/README.md                Agent responsibilities
 harness/README.md               Harness design
@@ -403,10 +412,15 @@ pass/fail.
 
 ## Real Data Folder
 
-Put real robot data under `real_data/<session_name>/`.
+Put real robot data inside the relevant embodiment. For the UR10e gear assembly
+manipulator example, use:
 
 ```text
-real_data/<session_name>/
+embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>/
+```
+
+```text
+embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>/
   camera_data/
     index.csv
     color/
@@ -428,7 +442,8 @@ real_data/<session_name>/
 Use the template:
 
 ```bash
-cp -R real_data/templates real_data/ur10e_day1
+cp -R embodiments/manipulator/ur10e_gear_assembly/real_data/templates \
+  embodiments/manipulator/ur10e_gear_assembly/real_data/ur10e_day1
 ```
 
 Fill in:
@@ -443,21 +458,21 @@ Fill in:
 Convert raw subfolders into the pipeline format:
 
 ```bash
-./scripts/prepare_real_data.sh real_data/ur10e_day1
+./scripts/prepare_real_data.sh embodiments/manipulator/ur10e_gear_assembly/real_data/ur10e_day1
 ```
 
 This writes:
 
 ```text
-real_data/ur10e_day1/aligned/records.jsonl
-real_data/ur10e_day1/aligned/prepare_summary.json
+embodiments/manipulator/ur10e_gear_assembly/real_data/ur10e_day1/aligned/records.jsonl
+embodiments/manipulator/ur10e_gear_assembly/real_data/ur10e_day1/aligned/prepare_summary.json
 ```
 
 Then run the pipeline directly on the session folder:
 
 ```bash
-DATASET=real_data/ur10e_day1 ./scripts/run_skill_harness.sh
-DATASET=real_data/ur10e_day1 ./scripts/run_evaluation_loop.sh
+DATASET=embodiments/manipulator/ur10e_gear_assembly/real_data/ur10e_day1 ./scripts/run_skill_harness.sh
+DATASET=embodiments/manipulator/ur10e_gear_assembly/real_data/ur10e_day1 ./scripts/run_evaluation_loop.sh
 ```
 
 The loader automatically uses `aligned/records.jsonl` when a session directory
@@ -580,10 +595,11 @@ decision -> human gate chain.
 ### 9. Prepare a real-data session
 
 ```bash
-cp -R real_data/templates real_data/ur10e_day1
+cp -R embodiments/manipulator/ur10e_gear_assembly/real_data/templates \
+  embodiments/manipulator/ur10e_gear_assembly/real_data/ur10e_day1
 # Fill the CSV files and calibration.json with real session data.
-./scripts/prepare_real_data.sh real_data/ur10e_day1
-DATASET=real_data/ur10e_day1 ./scripts/run_evaluation_loop.sh
+./scripts/prepare_real_data.sh embodiments/manipulator/ur10e_gear_assembly/real_data/ur10e_day1
+DATASET=embodiments/manipulator/ur10e_gear_assembly/real_data/ur10e_day1 ./scripts/run_evaluation_loop.sh
 ```
 
 ## Step By Step: Tutorial Training

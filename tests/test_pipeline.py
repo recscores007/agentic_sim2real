@@ -164,7 +164,8 @@ class PipelineTests(unittest.TestCase):
     def test_prepare_real_data_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "records.jsonl"
-            summary = prepare_real_session(ROOT / "real_data" / "example_session", out_path=out)
+            session = ROOT / "embodiments" / "manipulator" / "ur10e_gear_assembly" / "real_data" / "example_session"
+            summary = prepare_real_session(session, out_path=out)
             self.assertEqual(summary["records"], 12)
             self.assertTrue(out.exists())
             records = load_records(out)
