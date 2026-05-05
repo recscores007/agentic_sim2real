@@ -210,6 +210,23 @@ class PipelineTests(unittest.TestCase):
             self.assertGreaterEqual(len(lines), 15)
             self.assertEqual(lines[0]["status"], "skill_completed")
 
+    def test_llm_orchestrator_uses_user_gap_hint_for_priority(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = run_llm_orchestrated_loop(
+                root=ROOT,
+                config_path=ROOT / "configs" / "ur10e_gear_assembly.example.json",
+                dataset_path=ROOT / "sample_data" / "real_log_demo.jsonl",
+                out_dir=tmp,
+                gap_hints=["contact"],
+            )
+            self.assertEqual(summary["gap_hints"][0]["normalized"], "contact")
+            completed = summary["completed_skill_ids"]
+            self.assertLess(completed.index("action_scale_sweep"), completed.index("newton_sysid"))
+            first_context = Path(tmp) / "llm_orchestrator" / "steps" / "step_001_context.json"
+            context = json.loads(first_context.read_text())
+            self.assertEqual(context["task"]["user_gap_hints"][0]["normalized"], "contact")
+            self.assertIn("action_scale_sweep", context["task"]["gap_hint_priority_skill_ids"])
+
     def test_llm_orchestrator_rejects_invalid_release_gate_call(self) -> None:
         class BadReleaseThenScriptedProvider(LLMProvider):
             name = "bad_release_then_scripted"

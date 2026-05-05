@@ -51,6 +51,7 @@ DEFAULTS: dict[str, Any] = {
         "provider": "scripted",
         "command": [],
         "model": "",
+        "gap_hints": [],
         "max_steps": 32,
         "max_invalid_decisions": 3,
         "allow_retries": False,

@@ -28,7 +28,8 @@ The agent cannot pass itself, relax safety gates, or run the real robot.
 ## 1.5. LLM Orchestrator Chooses Skills
 
 The LLM orchestrator reads the task context, manifest catalog, completed
-scorecards, and runnable skills. It proposes one action at a time:
+scorecards, user-provided gap hints, and runnable skills. It proposes one action
+at a time:
 
 - `run_skill`
 - `stop`
@@ -43,6 +44,10 @@ Guardrails reject invalid decisions before any skill runs:
 - hardware-facing skills without explicit approval
 
 The orchestrator writes `llm_orchestrator/journal.jsonl`.
+
+Gap hints such as `perception`, `actuator`, `contact`, `latency`,
+`domain_randomization`, `deployment`, and `policy` are treated as starting
+hypotheses. They bias skill ordering only after prerequisites are complete.
 
 ## 2. Evaluator Measures
 

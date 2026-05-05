@@ -20,6 +20,102 @@ from .skill_harness import (
 
 
 VALID_ACTIONS = {"run_skill", "stop", "request_human_review"}
+FOUNDATION_SKILLS = ["env_preflight", "real_data_quality_gate", "ros_preflight"]
+GAP_HINT_PRIORITY: dict[str, list[str]] = {
+    "perception": [
+        "env_preflight",
+        "real_data_quality_gate",
+        "ros_preflight",
+        "pose_repeatability",
+        "domain_randomization_update",
+        "autoresearch_planner",
+        "sim_eval_regression",
+    ],
+    "actuator": [
+        "env_preflight",
+        "real_data_quality_gate",
+        "pose_repeatability",
+        "sysid_step_response",
+        "newton_sysid",
+        "pace_sysid",
+        "action_scale_sweep",
+        "domain_randomization_update",
+        "autoresearch_planner",
+        "sim_eval_regression",
+    ],
+    "contact": [
+        "env_preflight",
+        "real_data_quality_gate",
+        "pose_repeatability",
+        "sysid_step_response",
+        "action_scale_sweep",
+        "domain_randomization_update",
+        "sim_eval_regression",
+    ],
+    "latency": [
+        "env_preflight",
+        "real_data_quality_gate",
+        "pose_repeatability",
+        "sysid_step_response",
+        "newton_sysid",
+        "pace_sysid",
+        "domain_randomization_update",
+        "sim_eval_regression",
+    ],
+    "domain_randomization": [
+        "env_preflight",
+        "real_data_quality_gate",
+        "ros_preflight",
+        "pose_repeatability",
+        "sysid_step_response",
+        "newton_sysid",
+        "pace_sysid",
+        "domain_randomization_update",
+        "autoresearch_planner",
+        "sim_eval_regression",
+    ],
+    "deployment": [
+        "env_preflight",
+        "ros_preflight",
+        "isaaclab_task_check",
+        "policy_artifact_audit",
+        "sim_eval_regression",
+    ],
+    "policy": [
+        "env_preflight",
+        "real_data_quality_gate",
+        "isaaclab_task_check",
+        "policy_artifact_audit",
+        "sim_eval_regression",
+        "autoresearch_planner",
+    ],
+}
+GAP_HINT_ALIASES = {
+    "vision": "perception",
+    "camera": "perception",
+    "pose": "perception",
+    "shaft_pose": "perception",
+    "foundationpose": "perception",
+    "sysid": "actuator",
+    "dynamics": "actuator",
+    "friction": "actuator",
+    "stiction": "actuator",
+    "joint": "actuator",
+    "force": "contact",
+    "insertion": "contact",
+    "jam": "contact",
+    "jamming": "contact",
+    "delay": "latency",
+    "dr": "domain_randomization",
+    "randomization": "domain_randomization",
+    "sim_params": "domain_randomization",
+    "ros": "deployment",
+    "middleware": "deployment",
+    "deploy": "deployment",
+    "checkpoint": "policy",
+    "regression": "policy",
+    "success": "policy",
+}
 
 
 @dataclass(frozen=True)
@@ -67,12 +163,13 @@ class ScriptedLLMProvider(LLMProvider):
         runnable = context.get("runnable_skills", [])
         completed = set(context.get("completed_skill_ids", []))
         if runnable:
-            skill_id = str(runnable[0])
+            skill_id = _prioritized_runnable_skill([str(item) for item in runnable], context)
             skill = context["skills"][skill_id]
+            hint_text = _hint_rationale(context)
             return {
                 "action": "run_skill",
                 "skill_id": skill_id,
-                "rationale": f"Run next valid skill from the LLM-visible catalog: {skill['name']}.",
+                "rationale": f"Run next valid skill from the LLM-visible catalog: {skill['name']}.{hint_text}",
                 "expected_evidence": skill.get("outputs", []),
                 "risk_checks": skill.get("validators", []),
                 "confidence": 0.95,
@@ -193,6 +290,7 @@ def run_llm_orchestrated_loop(
     provider_name: str | None = None,
     provider_command: list[str] | None = None,
     max_steps: int | None = None,
+    gap_hints: list[str] | None = None,
 ) -> dict[str, Any]:
     ctx, manifests = prepare_harness(
         root=root,
@@ -208,6 +306,7 @@ def run_llm_orchestrated_loop(
     llm = provider or provider_from_config(ctx.config, work_dir=steps_dir, provider_name=provider_name, command=provider_command)
 
     llm_cfg = ctx.config.llm_orchestrator
+    initial_gap_hints = normalize_gap_hints([*_coerce_gap_hints(llm_cfg.get("gap_hints", [])), *(gap_hints or [])])
     step_limit = int(max_steps or llm_cfg.get("max_steps", 32))
     invalid_limit = int(llm_cfg.get("max_invalid_decisions", 3))
     budget_skill_calls = int(llm_cfg.get("budget_skill_calls", step_limit))
@@ -224,7 +323,7 @@ def run_llm_orchestrated_loop(
             stop_reason = "budget_skill_calls_exhausted"
             break
 
-        context = _orchestration_context(ctx, manifests, ordered, results, step, llm.name)
+        context = _orchestration_context(ctx, manifests, ordered, results, step, llm.name, initial_gap_hints)
         context_path = steps_dir / f"step_{step:03d}_context.json"
         context_path.write_text(json.dumps(context, indent=2, sort_keys=True) + "\n")
 
@@ -295,6 +394,7 @@ def run_llm_orchestrated_loop(
         "steps": len(journal),
         "skill_calls": len(results),
         "completed_skill_ids": list(results),
+        "gap_hints": initial_gap_hints,
         "journal": str(journal_path),
         "scoreboard": scoreboard,
     }
@@ -370,7 +470,9 @@ def _orchestration_context(
     results: dict[str, SkillResult],
     step: int,
     provider_name: str,
+    gap_hints: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    priority = _priority_skill_ids(gap_hints)
     return {
         "step": step,
         "provider": provider_name,
@@ -379,6 +481,8 @@ def _orchestration_context(
             "dataset": str(ctx.dataset),
             "include_real": ctx.include_real,
             "safe_to_autorun_robot": False,
+            "user_gap_hints": gap_hints,
+            "gap_hint_priority_skill_ids": priority,
         },
         "llm_contract": {
             "allowed_actions": sorted(VALID_ACTIONS),
@@ -400,12 +504,88 @@ def _orchestration_context(
         },
         "ordered_skills": ordered,
         "runnable_skills": _runnable_skills(manifests, ordered, results, ctx.include_real),
+        "priority_runnable_skills": [
+            skill_id
+            for skill_id in priority
+            if skill_id in _runnable_skills(manifests, ordered, results, ctx.include_real)
+        ],
         "completed_skill_ids": list(results),
         "skills": {skill_id: _skill_card(manifest, results.get(skill_id)) for skill_id, manifest in manifests.items()},
         "release_gate_ready": _release_gate_ready(manifests, results),
         "human_gate_ready": "release_candidate_gate" in results,
         "previous_results": {skill_id: result.to_dict() for skill_id, result in results.items()},
     }
+
+
+def normalize_gap_hints(hints: list[str]) -> list[dict[str, Any]]:
+    normalized = []
+    seen: set[str] = set()
+    for raw_hint in hints:
+        raw = str(raw_hint).strip()
+        if not raw:
+            continue
+        key = raw.lower().replace("-", "_").replace(" ", "_")
+        canonical = GAP_HINT_ALIASES.get(key, key)
+        priority = GAP_HINT_PRIORITY.get(canonical, [])
+        signature = f"{canonical}:{raw}"
+        if signature in seen:
+            continue
+        seen.add(signature)
+        normalized.append(
+            {
+                "raw": raw,
+                "normalized": canonical,
+                "recognized": bool(priority),
+                "priority_skill_ids": priority,
+                "instruction": (
+                    "Use this as an initial hypothesis for skill ordering only. "
+                    "Do not skip measurement, dependencies, release gates, or human hardware approval."
+                ),
+            }
+        )
+    return normalized
+
+
+def _coerce_gap_hints(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+def _priority_skill_ids(gap_hints: list[dict[str, Any]]) -> list[str]:
+    ordered: list[str] = []
+    for skill_id in FOUNDATION_SKILLS:
+        if skill_id not in ordered:
+            ordered.append(skill_id)
+    for hint in gap_hints:
+        for skill_id in hint.get("priority_skill_ids", []):
+            if skill_id not in ordered:
+                ordered.append(str(skill_id))
+    return ordered
+
+
+def _prioritized_runnable_skill(runnable: list[str], context: dict[str, Any]) -> str:
+    priority = [str(item) for item in context.get("task", {}).get("gap_hint_priority_skill_ids", [])]
+    completed = set(context.get("completed_skill_ids", []))
+    for foundation in FOUNDATION_SKILLS:
+        if foundation in runnable and foundation not in completed:
+            return foundation
+    for skill_id in priority:
+        if skill_id in runnable:
+            return skill_id
+    return str(runnable[0])
+
+
+def _hint_rationale(context: dict[str, Any]) -> str:
+    hints = context.get("task", {}).get("user_gap_hints", [])
+    recognized = [str(item.get("normalized")) for item in hints if item.get("recognized")]
+    if not recognized:
+        return ""
+    return f" User gap hint priority: {', '.join(recognized)}."
 
 
 def _runnable_skills(

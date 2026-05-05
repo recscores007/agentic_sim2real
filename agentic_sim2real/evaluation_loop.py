@@ -27,6 +27,7 @@ def run_evaluation_loop(
     llm_provider_name: str | None = None,
     llm_command: list[str] | None = None,
     max_steps: int | None = None,
+    gap_hints: list[str] | None = None,
 ) -> dict[str, Any]:
     root_path = Path(root).resolve()
     out = Path(out_dir).expanduser().resolve()
@@ -49,6 +50,7 @@ def run_evaluation_loop(
         provider_name=llm_provider_name,
         provider_command=llm_command,
         max_steps=max_steps,
+        gap_hints=gap_hints,
     )
     scoreboard = orchestrator["scoreboard"]
     measurements = evaluator_measures(scoreboard, threshold_policy, out)

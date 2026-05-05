@@ -68,6 +68,8 @@ The runtime agent is now an LLM-style orchestrator. It receives:
 
 - task/config summary
 - dataset path
+- user-provided initial gap hints, such as `perception`, `actuator`, `contact`,
+  `latency`, `domain_randomization`, `deployment`, or `policy`
 - skill manifest catalog
 - completed scorecards
 - runnable skills whose dependencies are satisfied
@@ -110,6 +112,18 @@ outputs/<run>/llm_orchestrator/journal.jsonl
 outputs/<run>/llm_orchestrator/steps/step_###_context.json
 outputs/<run>/llm_orchestrator/steps/step_###_decision.json
 ```
+
+If you already suspect the gap family, steer the first-pass triage with one or
+more gap hints:
+
+```bash
+DATASET=embodiments/manipulator/ur10e_gear_assembly/real_data/ur10e_day1 \
+./scripts/run_llm_orchestrator.sh --gap-hint actuator --gap-hint contact
+```
+
+Gap hints are **hypotheses**, not permissions. They change skill ordering only
+when a hinted skill is already runnable. The guardrails still require data
+quality, dependencies, release scoring, and human hardware approval.
 
 ## Autorun And SysID Status
 
@@ -792,7 +806,8 @@ Equivalent CLI:
 agentic-sim2real --config "$AGENTIC_SIM2REAL_CONFIG" run-llm-loop \
   --root . \
   --dataset sample_data/real_log_demo.jsonl \
-  --out outputs/llm_orchestrator_demo
+  --out outputs/llm_orchestrator_demo \
+  --gap-hint perception
 ```
 
 Expected outputs:
@@ -807,8 +822,10 @@ outputs/llm_orchestrator_demo/
   release_candidate.json
 ```
 
-The default `scripted` provider is deterministic. Use `--llm-provider command`
-to delegate each decision to a real LLM adapter.
+The default `scripted` provider is deterministic. Use `--gap-hint actuator`,
+`--gap-hint perception`, `--gap-hint contact`, or another supported family to
+steer first-pass triage. Use `--llm-provider command` to delegate each decision
+to a real LLM adapter.
 
 ### 6. Inspect the scoreboard
 

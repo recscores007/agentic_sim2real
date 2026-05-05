@@ -71,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     eval_loop.add_argument("--llm-provider", default=None, help="LLM provider: scripted or command")
     eval_loop.add_argument("--llm-command-json", default=None, help="JSON list command for command-backed LLM provider")
     eval_loop.add_argument("--max-steps", type=int, default=None)
+    eval_loop.add_argument("--gap-hint", action="append", default=[], help="Initial sim2real gap focus, e.g. perception, actuator, contact, latency, domain_randomization, deployment, policy")
 
     llm_loop = sub.add_parser("run-llm-loop", help="Run the LLM-orchestrated skill loop")
     llm_loop.add_argument("--root", default=".")
@@ -81,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     llm_loop.add_argument("--llm-provider", default=None, help="LLM provider: scripted or command")
     llm_loop.add_argument("--llm-command-json", default=None, help="JSON list command for command-backed LLM provider")
     llm_loop.add_argument("--max-steps", type=int, default=None)
+    llm_loop.add_argument("--gap-hint", action="append", default=[], help="Initial sim2real gap focus, e.g. perception, actuator, contact, latency, domain_randomization, deployment, policy")
 
     sub.add_parser("check-real-gate", help="Fail unless the real-robot human gate env var is set")
 
@@ -117,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
             args.llm_provider,
             args.llm_command_json,
             args.max_steps,
+            args.gap_hint,
         )
     if args.cmd == "run-llm-loop":
         return cmd_run_llm_loop(
@@ -129,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
             args.llm_provider,
             args.llm_command_json,
             args.max_steps,
+            args.gap_hint,
         )
     if args.cmd == "check-real-gate":
         require_real_robot_gate(config)
@@ -272,6 +276,7 @@ def cmd_run_evaluation_loop(
     llm_provider: str | None,
     llm_command_json: str | None,
     max_steps: int | None,
+    gap_hints: list[str],
 ) -> int:
     trace = run_evaluation_loop(
         root=root,
@@ -284,6 +289,7 @@ def cmd_run_evaluation_loop(
         llm_provider_name=llm_provider,
         llm_command=load_provider_command_json(llm_command_json),
         max_steps=max_steps,
+        gap_hints=gap_hints,
     )
     print(json.dumps(trace, indent=2, sort_keys=True))
     return 0 if trace["release_gate_decides"]["status"] == "promote_to_human_review" else 1
@@ -299,6 +305,7 @@ def cmd_run_llm_loop(
     llm_provider: str | None,
     llm_command_json: str | None,
     max_steps: int | None,
+    gap_hints: list[str],
 ) -> int:
     summary = run_llm_orchestrated_loop(
         root=root,
@@ -310,6 +317,7 @@ def cmd_run_llm_loop(
         provider_name=llm_provider,
         provider_command=load_provider_command_json(llm_command_json),
         max_steps=max_steps,
+        gap_hints=gap_hints,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0 if summary["status"] == "pass" else 1

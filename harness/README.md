@@ -29,6 +29,16 @@ decision against dependencies and safety guardrails, runs the selected skill
 through the same deterministic harness, then appends the decision/result to
 `llm_orchestrator/journal.jsonl`.
 
+Users can provide an initial gap-family hint:
+
+```bash
+./scripts/run_llm_orchestrator.sh --gap-hint perception
+./scripts/run_llm_orchestrator.sh --gap-hint actuator --gap-hint contact
+```
+
+Hints are added to the LLM context and priority list, but they do not bypass
+dependencies or release gates.
+
 Outputs:
 
 ```text
