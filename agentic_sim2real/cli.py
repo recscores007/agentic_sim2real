@@ -9,6 +9,7 @@ from .config import PipelineConfig, choose_task, command_env, load_config
 from .dataset import load_records
 from .embodiments import validate_embodiments
 from .evaluation_loop import run_evaluation_loop
+from .golden_mutator import run_mutation_suite
 from .llm_orchestrator import load_provider_command_json, run_llm_orchestrated_loop
 from .preflight import run_preflight
 from .real_data import ensure_aligned_dataset, inspect_real_session, prepare_real_session
@@ -40,6 +41,11 @@ def main(argv: list[str] | None = None) -> int:
     analyze = sub.add_parser("analyze", help="Analyze recorded real logs offline")
     analyze.add_argument("--dataset", required=True)
     analyze.add_argument("--out", required=True)
+
+    golden_mutations = sub.add_parser("run-golden-mutations", help="Generate temporary golden dataset mutations and verify data-readiness alerts")
+    golden_mutations.add_argument("--root", default=".")
+    golden_mutations.add_argument("--dataset", default="golden/real_datasets/data_readiness_stress")
+    golden_mutations.add_argument("--out", required=True)
 
     inspect = sub.add_parser("inspect-real-data", help="Inspect an embodiment real_data session before alignment")
     inspect.add_argument("--session", required=True)
@@ -101,6 +107,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_validate_embodiments(args.root)
     if args.cmd == "analyze":
         return cmd_analyze(config, args.dataset, args.out)
+    if args.cmd == "run-golden-mutations":
+        return cmd_run_golden_mutations(config, args.root, args.dataset, args.out)
     if args.cmd == "inspect-real-data":
         return cmd_inspect_real_data(args.session, args.root, args.embodiment)
     if args.cmd == "prepare-real-data":
@@ -197,6 +205,12 @@ def cmd_analyze(config: PipelineConfig, dataset_path: str, out_dir: str) -> int:
         print(f"- {name}: {path}")
     print(f"Transfer score: {plan['transfer_score']['score_0_to_1']} ({plan['transfer_score']['interpretation']})")
     return 0
+
+
+def cmd_run_golden_mutations(config: PipelineConfig, root: str, dataset_path: str, out_dir: str) -> int:
+    report = run_mutation_suite(dataset_path, out_dir, config, root=root)
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if report["status"] == "pass" else 1
 
 
 def cmd_inspect_real_data(session: str, root: str, embodiment_id: str | None) -> int:

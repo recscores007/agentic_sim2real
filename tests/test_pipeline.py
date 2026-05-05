@@ -14,6 +14,7 @@ from agentic_sim2real.data_quality import evaluate_real_data_quality
 from agentic_sim2real.dataset import load_records
 from agentic_sim2real.embodiments import validate_embodiments
 from agentic_sim2real.evaluation_loop import run_evaluation_loop
+from agentic_sim2real.golden_mutator import run_mutation_suite
 from agentic_sim2real.llm_orchestrator import LLMProvider, ScriptedLLMProvider, run_llm_orchestrated_loop
 from agentic_sim2real.preflight import run_preflight
 from agentic_sim2real.real_data import inspect_real_session, prepare_real_session
@@ -477,6 +478,27 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertIn("heldout", scorecard["split_scores"])
         self.assertIsNotNone(scorecard["split_scores"]["heldout_vs_train_delta"])
+
+    def test_dynamic_golden_mutations_detect_targeted_alerts(self) -> None:
+        cfg = load_config(ROOT / "configs" / "ur10e_gear_assembly.example.json")
+        dataset = ROOT / "golden" / "real_datasets" / "data_readiness_stress"
+        with tempfile.TemporaryDirectory() as tmp:
+            report = run_mutation_suite(dataset, tmp, cfg, root=ROOT)
+            self.assertEqual(report["status"], "pass")
+            self.assertTrue((Path(tmp) / "mutation_report.json").exists())
+            variants = {item["mutation_id"]: item for item in report["variants"]}
+            self.assertEqual(variants["clean_baseline"]["observed_alert_codes"], [])
+            expected = {
+                "drop_all_camera_links": {"heldout_frames_missing", "low_frame_link_coverage", "episode_frame_gaps"},
+                "heldout_without_frames": {"heldout_frames_missing", "episode_frame_gaps"},
+                "orphan_sbl_frames": {"orphan_frames_detected"},
+                "low_rate_telemetry": {"delay_under_sampled"},
+                "auto_positive_labels": {"auto_positive_success_labels"},
+                "fk_proxy_pose": {"fk_proxy_pose_validation"},
+            }
+            for mutation_id, expected_codes in expected.items():
+                self.assertTrue(expected_codes.issubset(set(variants[mutation_id]["observed_alert_codes"])))
+                self.assertTrue((Path(tmp) / mutation_id / "aligned" / "records.jsonl").exists())
 
     def test_harness_auto_prepares_raw_csv_session(self) -> None:
         source = ROOT / "embodiments" / "manipulator" / "ur10e_gear_assembly" / "real_data" / "example_session"

@@ -275,6 +275,30 @@ agentic-sim2real --config configs/ur10e_gear_assembly.example.json run-harness \
 The expected alert codes live in
 `golden/real_datasets/data_readiness_stress/expected_alerts.json`.
 
+For stronger regression coverage, run the dynamic mutation suite. It does not
+edit the canonical golden dataset. Instead, it builds a clean temporary
+baseline, applies one targeted defect per variant, runs the same
+`real_data_quality_gate`, and verifies that the expected alert code appears.
+
+```bash
+agentic-sim2real --config configs/ur10e_gear_assembly.example.json run-golden-mutations \
+  --root . \
+  --dataset golden/real_datasets/data_readiness_stress \
+  --out outputs/golden_mutation_check
+```
+
+The report is written to:
+
+```text
+outputs/golden_mutation_check/mutation_report.json
+outputs/golden_mutation_check/mutation_report.md
+outputs/golden_mutation_check/<mutation_id>/aligned/records.jsonl
+```
+
+Current dynamic variants cover all-camera-dropout, heldout-only frame loss,
+orphan frame extraction, low-rate telemetry, auto-positive labels, and FK-proxy
+pose validation.
+
 ## Release Profiles
 
 Default config uses `release.profile="smoke"` so a new user can validate the
