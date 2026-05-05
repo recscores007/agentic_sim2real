@@ -8,6 +8,8 @@ It is a Python CLI and lightweight framework for robotics teams that need to tur
 
 ## Workflow
 
+![Agentic Sim2Real workflow](docs/assets/workflow.svg)
+
 ```mermaid
 flowchart LR
   Data["Real robot logs<br/>or sample data"] --> Evidence["Real-data<br/>evidence gate"]
