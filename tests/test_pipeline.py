@@ -77,6 +77,74 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("release_candidate_gate", scoreboard["skills"])
             self.assertTrue((Path(tmp) / "scoreboard.json").exists())
 
+    def test_custom_command_skill_overrides_builtin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            custom_root = tmp_path / "custom_skills"
+            custom_skill = custom_root / "env_preflight"
+            custom_skill.mkdir(parents=True)
+            runner = tmp_path / "custom_env_preflight.py"
+            runner.write_text(
+                "\n".join(
+                    [
+                        "import json",
+                        "import os",
+                        "from pathlib import Path",
+                        "out = Path(os.environ['UR_SKILL_OUTPUT_JSON'])",
+                        "skill_out = Path(os.environ['UR_SKILL_OUT_DIR'])",
+                        "evidence = skill_out / 'custom_evidence.json'",
+                        "evidence.write_text(json.dumps({'custom': True}) + '\\n')",
+                        "out.write_text(json.dumps({",
+                        "    'status': 'pass',",
+                        "    'quality_score': 0.93,",
+                        "    'confidence': 0.88,",
+                        "    'blocking_failures': [],",
+                        "    'warnings': ['custom override used'],",
+                        "    'evidence_files': [str(evidence)],",
+                        "    'metrics': {'custom_skill_used': True},",
+                        "}) + '\\n')",
+                    ]
+                )
+                + "\n"
+            )
+            (custom_skill / "skill.json").write_text(
+                json.dumps(
+                    {
+                        "id": "env_preflight",
+                        "name": "Test Custom Environment Preflight",
+                        "owner_agent": "orchestrator_agent",
+                        "description": "Test override for env preflight.",
+                        "implementation": "external_command",
+                        "runner": "command",
+                        "command": ["python3", str(runner)],
+                        "timeout_s": 30,
+                        "depends_on": [],
+                        "inputs": ["config"],
+                        "outputs": ["custom_evidence.json", "result.json"],
+                        "validators": ["custom command writes a skill result"],
+                        "quality_gate": {"min_score": 0.7},
+                        "human_required": False,
+                        "release_blocking": True,
+                        "real_robot": False,
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
+            out_dir = tmp_path / "out"
+            scoreboard = run_harness(
+                root=ROOT,
+                config_path=ROOT / "configs" / "ur10e_gear_assembly.example.json",
+                dataset_path=ROOT / "sample_data" / "real_log_demo.jsonl",
+                out_dir=out_dir,
+                only_skill="env_preflight",
+                skill_dirs=[custom_root],
+            )
+            result = scoreboard["skills"]["env_preflight"]
+            self.assertEqual(result["status"], "pass")
+            self.assertTrue(result["metrics"]["custom_skill_used"])
+            self.assertIn("external_command_log.json", result["evidence_files"][-1])
+
     def test_evaluation_loop_writes_five_stage_trace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             trace = run_evaluation_loop(

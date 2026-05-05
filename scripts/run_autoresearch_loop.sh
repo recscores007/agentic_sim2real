@@ -11,7 +11,8 @@ echo "Running skill validation harness with AutoResearch planner enabled."
 python3 -m ur_agentic.cli --config "${UR_GEAR_CONFIG}" run-harness \
   --root "${SCRIPT_DIR}/.." \
   --dataset "${DATASET}" \
-  --out "${OUT}"
+  --out "${OUT}" \
+  "$@"
 
 echo
 echo "AutoResearch evidence:"

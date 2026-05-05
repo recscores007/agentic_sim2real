@@ -127,6 +127,74 @@ Move robot/task details into config, adapters, templates, and threshold policy.
 Do not create a new skill just because the robot changed.
 ```
 
+## Replace Any Skill
+
+The pipeline is modular by design. A user can replace any built-in skill with a
+custom skill that has the same `id` and emits the same result contract.
+
+Replacement order:
+
+```text
+skills/            built-in skill library
+custom_skills/     automatic local overrides
+--skill-dir        explicit override directories, applied last
+```
+
+Example:
+
+```bash
+./scripts/run_skill_harness.sh \
+  --skill-dir examples/custom_skills \
+  --skill env_preflight
+```
+
+Custom command-runner manifest excerpt:
+
+```json
+{
+  "id": "env_preflight",
+  "implementation": "external_command",
+  "runner": "command",
+  "command": ["python3", "examples/custom_skills/env_preflight/run.py"],
+  "quality_gate": {"min_score": 0.7},
+  "human_required": false,
+  "release_blocking": true,
+  "real_robot": false
+}
+```
+
+See `examples/custom_skills/env_preflight/skill.json` for a complete manifest.
+
+The harness gives command skills:
+
+- `UR_SKILL_INPUT_JSON`: input bundle with config, dataset, manifest, output paths, and previous skill results
+- `UR_SKILL_OUTPUT_JSON`: path where the skill writes its result JSON
+- `UR_SKILL_OUT_DIR`: evidence directory for this skill
+- `UR_SKILL_MANIFEST_DIR`: directory containing the selected `skill.json`
+- `UR_ROOT`, `UR_CONFIG`, `UR_DATASET`, `UR_SKILL_ID`
+
+The skill result contract is stable:
+
+```json
+{
+  "status": "pass",
+  "quality_score": 0.95,
+  "confidence": 0.8,
+  "blocking_failures": [],
+  "warnings": [],
+  "evidence_files": ["my_evidence.json"],
+  "metrics": {"custom": true}
+}
+```
+
+The evaluator and release gate treat built-in and custom skills the same way.
+This is what makes the architecture portable: users can swap skill
+implementations while keeping the same validation, critic, and release policy.
+
+If a custom skill can command hardware, mark `"real_robot": true`. The default
+harness skips real-robot skills unless `--include-real` is explicitly passed
+after human approval.
+
 ## What This Targets
 
 - UR10e arm as the current example robot
@@ -169,6 +237,9 @@ skills/                         Atomic skill contracts
   sim_eval_regression/skill.json
   release_candidate_gate/skill.json
   real_robot_gate/skill.json
+
+custom_skills/                  Drop-in local skill overrides
+examples/custom_skills/         Example external command-runner replacement skill
 
 ur_agentic/
   skill_harness.py              Skill runner, validators, scoreboard, release gate

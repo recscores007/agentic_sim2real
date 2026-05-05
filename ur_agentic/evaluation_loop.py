@@ -22,6 +22,7 @@ def run_evaluation_loop(
     out_dir: str | Path,
     threshold_policy_path: str | Path | None = None,
     include_real: bool = False,
+    skill_dirs: list[str | Path] | None = None,
 ) -> dict[str, Any]:
     root_path = Path(root).resolve()
     out = Path(out_dir).expanduser().resolve()
@@ -39,6 +40,7 @@ def run_evaluation_loop(
         dataset_path=dataset_path,
         out_dir=out / "harness",
         include_real=include_real,
+        skill_dirs=skill_dirs,
     )
     measurements = evaluator_measures(scoreboard, threshold_policy, out)
     critique = critic_challenges(scoreboard, threshold_policy, out)

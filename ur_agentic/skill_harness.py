@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -25,6 +27,7 @@ REQUIRED_MANIFEST_FIELDS = {
     "quality_gate",
     "human_required",
     "release_blocking",
+    "real_robot",
 }
 
 
@@ -44,6 +47,14 @@ class SkillManifest:
     @property
     def implementation(self) -> str:
         return str(self.data["implementation"])
+
+    @property
+    def runner(self) -> str:
+        if self.data.get("runner"):
+            return str(self.data["runner"])
+        if self.implementation == "external_command":
+            return "command"
+        return "builtin"
 
     @property
     def release_blocking(self) -> bool:
@@ -93,6 +104,7 @@ class SkillResult:
 @dataclass
 class HarnessContext:
     root: Path
+    config_path: Path
     config: PipelineConfig
     dataset: Path
     out_dir: Path
@@ -103,14 +115,26 @@ class HarnessContext:
         return self.out_dir / "skills"
 
 
-def load_manifests(root: str | Path) -> list[SkillManifest]:
+def load_manifests(root: str | Path, skill_dirs: list[str | Path] | None = None) -> list[SkillManifest]:
     base = Path(root)
-    manifests = []
-    for path in sorted((base / "skills").glob("*/skill.json")):
-        data = json.loads(path.read_text())
-        manifests.append(SkillManifest(path=path, data=data))
+    manifest_by_id: dict[str, SkillManifest] = {}
+    manifest_dirs = [base / "skills"]
+    default_custom_dir = base / "custom_skills"
+    if default_custom_dir.exists():
+        manifest_dirs.append(default_custom_dir)
+    for skill_dir in skill_dirs or []:
+        path = Path(skill_dir)
+        manifest_dirs.append(path if path.is_absolute() else base / path)
+
+    for manifest_dir in manifest_dirs:
+        if not manifest_dir.exists():
+            continue
+        for path in sorted(manifest_dir.glob("*/skill.json")):
+            data = json.loads(path.read_text())
+            manifest_by_id[str(data.get("id", path.parent.name))] = SkillManifest(path=path, data=data)
+    manifests = list(manifest_by_id.values())
     if not manifests:
-        raise ValueError(f"No skill manifests found under {base / 'skills'}")
+        raise ValueError(f"No skill manifests found under {base / 'skills'} or overlays")
     return manifests
 
 
@@ -129,11 +153,18 @@ def validate_manifest(manifest: SkillManifest) -> list[str]:
         errors.append("outputs must be a list")
     if not isinstance(manifest.data.get("quality_gate"), dict):
         errors.append("quality_gate must be an object")
+    runner = str(manifest.data.get("runner", "command" if manifest.data.get("implementation") == "external_command" else "builtin"))
+    if runner not in {"builtin", "command"}:
+        errors.append("runner must be 'builtin' or 'command'")
+    if runner == "command":
+        command = manifest.data.get("command")
+        if not isinstance(command, list) or not command or not all(isinstance(item, str) for item in command):
+            errors.append("command-runner skills must provide a non-empty string list in command")
     return errors
 
 
-def validate_all_manifests(root: str | Path) -> dict[str, Any]:
-    manifests = load_manifests(root)
+def validate_all_manifests(root: str | Path, skill_dirs: list[str | Path] | None = None) -> dict[str, Any]:
+    manifests = load_manifests(root, skill_dirs=skill_dirs)
     results = {}
     for manifest in manifests:
         errors = validate_manifest(manifest)
@@ -155,18 +186,21 @@ def run_harness(
     out_dir: str | Path,
     include_real: bool = False,
     only_skill: str | None = None,
+    skill_dirs: list[str | Path] | None = None,
 ) -> dict[str, Any]:
     root_path = Path(root).resolve()
+    resolved_config_path = Path(config_path).expanduser().resolve()
     out = Path(out_dir).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
     ctx = HarnessContext(
         root=root_path,
-        config=load_config(config_path),
+        config_path=resolved_config_path,
+        config=load_config(resolved_config_path),
         dataset=Path(dataset_path).expanduser().resolve(),
         out_dir=out,
         include_real=include_real,
     )
-    manifests = {m.skill_id: m for m in load_manifests(root_path)}
+    manifests = {m.skill_id: m for m in load_manifests(root_path, skill_dirs=skill_dirs)}
     for manifest in manifests.values():
         errors = validate_manifest(manifest)
         if errors:
@@ -218,6 +252,8 @@ def _run_one(
     skill_out: Path,
     previous: dict[str, SkillResult],
 ) -> SkillResult:
+    if manifest.runner == "command":
+        return _run_command_skill(manifest, ctx, skill_out, previous)
     impl = IMPLEMENTATIONS.get(manifest.implementation)
     if impl is None:
         return SkillResult(
@@ -228,6 +264,155 @@ def _run_one(
             blocking_failures=[f"unknown implementation: {manifest.implementation}"],
         )
     return impl(manifest, ctx, skill_out, previous)
+
+
+def _run_command_skill(
+    manifest: SkillManifest,
+    ctx: HarnessContext,
+    skill_out: Path,
+    previous: dict[str, SkillResult],
+) -> SkillResult:
+    command = [str(item) for item in manifest.data.get("command", [])]
+    input_path = skill_out / "skill_input.json"
+    output_path = skill_out / "skill_output.json"
+    log_path = skill_out / "external_command_log.json"
+    timeout_s = float(manifest.data.get("timeout_s", 300.0))
+    input_payload = {
+        "skill_id": manifest.skill_id,
+        "manifest": manifest.data,
+        "manifest_dir": str(manifest.path.parent),
+        "root": str(ctx.root),
+        "config_path": str(ctx.config_path),
+        "config": ctx.config.merged(),
+        "dataset": str(ctx.dataset),
+        "out_dir": str(ctx.out_dir),
+        "skill_out": str(skill_out),
+        "previous_results": {skill_id: result.to_dict() for skill_id, result in previous.items()},
+    }
+    input_path.write_text(json.dumps(input_payload, indent=2, sort_keys=True) + "\n")
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "UR_SKILL_ID": manifest.skill_id,
+            "UR_SKILL_INPUT_JSON": str(input_path),
+            "UR_SKILL_OUTPUT_JSON": str(output_path),
+            "UR_SKILL_OUT_DIR": str(skill_out),
+            "UR_SKILL_MANIFEST_DIR": str(manifest.path.parent),
+            "UR_ROOT": str(ctx.root),
+            "UR_CONFIG": str(ctx.config_path),
+            "UR_DATASET": str(ctx.dataset),
+        }
+    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=ctx.root,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        evidence = _write_json(
+            log_path,
+            {"command": command, "timeout_s": timeout_s, "stdout": exc.stdout, "stderr": exc.stderr},
+        )
+        return SkillResult(
+            skill_id=manifest.skill_id,
+            status="fail",
+            quality_score=0.0,
+            confidence=1.0,
+            blocking_failures=[f"external skill command timed out after {timeout_s} seconds"],
+            evidence_files=[evidence],
+        )
+    except OSError as exc:
+        evidence = _write_json(log_path, {"command": command, "error": str(exc)})
+        return SkillResult(
+            skill_id=manifest.skill_id,
+            status="fail",
+            quality_score=0.0,
+            confidence=1.0,
+            blocking_failures=[f"external skill command could not start: {exc}"],
+            evidence_files=[evidence],
+        )
+
+    log_evidence = _write_json(
+        log_path,
+        {
+            "command": command,
+            "returncode": completed.returncode,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+            "result_file": str(output_path),
+        },
+    )
+    if completed.returncode != 0:
+        return SkillResult(
+            skill_id=manifest.skill_id,
+            status="fail",
+            quality_score=0.0,
+            confidence=1.0,
+            blocking_failures=[f"external skill command exited {completed.returncode}"],
+            warnings=_stderr_warnings(completed.stderr),
+            evidence_files=[log_evidence],
+        )
+
+    try:
+        if output_path.exists():
+            payload = json.loads(output_path.read_text())
+        elif completed.stdout.strip():
+            payload = json.loads(completed.stdout)
+        else:
+            raise ValueError("external skill did not write UR_SKILL_OUTPUT_JSON or JSON stdout")
+    except Exception as exc:
+        return SkillResult(
+            skill_id=manifest.skill_id,
+            status="fail",
+            quality_score=0.0,
+            confidence=1.0,
+            blocking_failures=[f"external skill result could not be parsed: {exc}"],
+            evidence_files=[log_evidence],
+        )
+
+    result = _skill_result_from_payload(manifest, payload, skill_out)
+    result.evidence_files.append(log_evidence)
+    return result
+
+
+def _skill_result_from_payload(manifest: SkillManifest, payload: dict[str, Any], skill_out: Path) -> SkillResult:
+    status = str(payload.get("status", "fail"))
+    if status not in {"pass", "fail", "skip"}:
+        status = "fail"
+        failures = [f"invalid external skill status: {payload.get('status')}"]
+    else:
+        failures = [str(item) for item in payload.get("blocking_failures", [])]
+    evidence_files = [_normalize_evidence_path(path, skill_out) for path in payload.get("evidence_files", [])]
+    return SkillResult(
+        skill_id=manifest.skill_id,
+        status=status,
+        quality_score=float(payload.get("quality_score", 0.0)),
+        confidence=float(payload.get("confidence", 0.0)),
+        blocking_failures=failures,
+        warnings=[str(item) for item in payload.get("warnings", [])],
+        evidence_files=evidence_files,
+        metrics=dict(payload.get("metrics", {})),
+    )
+
+
+def _normalize_evidence_path(path: Any, skill_out: Path) -> str:
+    evidence = Path(str(path))
+    if not evidence.is_absolute():
+        evidence = skill_out / evidence
+    return str(evidence)
+
+
+def _stderr_warnings(stderr: str | None) -> list[str]:
+    if not stderr:
+        return []
+    text = str(stderr).strip()
+    return [text] if text else []
 
 
 def _apply_quality_gate(manifest: SkillManifest, result: SkillResult) -> SkillResult:

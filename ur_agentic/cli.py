@@ -4,7 +4,6 @@ import argparse
 import json
 import shutil
 import sys
-from pathlib import Path
 
 from .autoresearch import build_plan
 from .config import PipelineConfig, choose_task, command_env, load_config
@@ -24,10 +23,13 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("preflight", help="Check local command availability")
     sub.add_parser("commands", help="Print tutorial-aligned Isaac Lab and Isaac ROS commands")
-    sub.add_parser("list-skills", help="List atomic skills and owning agents")
+    list_skills = sub.add_parser("list-skills", help="List atomic skills and owning agents")
+    list_skills.add_argument("--root", default=".")
+    list_skills.add_argument("--skill-dir", action="append", default=[], help="Overlay directory with replacement skills")
 
     validate_skills = sub.add_parser("validate-skills", help="Validate every skill manifest")
     validate_skills.add_argument("--root", default=".")
+    validate_skills.add_argument("--skill-dir", action="append", default=[], help="Overlay directory with replacement skills")
 
     analyze = sub.add_parser("analyze", help="Analyze recorded real logs offline")
     analyze.add_argument("--dataset", required=True)
@@ -43,6 +45,7 @@ def main(argv: list[str] | None = None) -> int:
     harness.add_argument("--dataset", default="sample_data/real_log_demo.jsonl")
     harness.add_argument("--out", required=True)
     harness.add_argument("--skill", default=None, help="Run one skill by id")
+    harness.add_argument("--skill-dir", action="append", default=[], help="Overlay directory with replacement skills")
     harness.add_argument("--include-real", action="store_true", help="Include real-robot skills after human approval")
 
     eval_loop = sub.add_parser("run-evaluation-loop", help="Run Agent/Evaluator/Critic/Release/Human trace")
@@ -50,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
     eval_loop.add_argument("--dataset", default="sample_data/real_log_demo.jsonl")
     eval_loop.add_argument("--out", required=True)
     eval_loop.add_argument("--threshold-policy", default=None)
+    eval_loop.add_argument("--skill-dir", action="append", default=[], help="Overlay directory with replacement skills")
     eval_loop.add_argument("--include-real", action="store_true")
 
     sub.add_parser("check-real-gate", help="Fail unless the real-robot human gate env var is set")
@@ -62,15 +66,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "commands":
         return cmd_commands(config)
     if args.cmd == "list-skills":
-        return cmd_list_skills(Path("."))
+        return cmd_list_skills(args.root, args.skill_dir)
     if args.cmd == "validate-skills":
-        return cmd_validate_skills(args.root)
+        return cmd_validate_skills(args.root, args.skill_dir)
     if args.cmd == "analyze":
         return cmd_analyze(config, args.dataset, args.out)
     if args.cmd == "prepare-real-data":
         return cmd_prepare_real_data(args.session, args.out, args.tolerance_s)
     if args.cmd == "run-harness":
-        return cmd_run_harness(args.root, args.config, args.dataset, args.out, args.include_real, args.skill)
+        return cmd_run_harness(args.root, args.config, args.dataset, args.out, args.include_real, args.skill, args.skill_dir)
     if args.cmd == "run-evaluation-loop":
         return cmd_run_evaluation_loop(
             args.root,
@@ -79,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
             args.out,
             args.threshold_policy,
             args.include_real,
+            args.skill_dir,
         )
     if args.cmd == "check-real-gate":
         require_real_robot_gate(config)
@@ -142,16 +147,16 @@ def cmd_analyze(config: PipelineConfig, dataset_path: str, out_dir: str) -> int:
     return 0
 
 
-def cmd_list_skills(root: Path) -> int:
-    manifests = load_manifests(root)
+def cmd_list_skills(root: str, skill_dirs: list[str]) -> int:
+    manifests = load_manifests(root, skill_dirs=skill_dirs)
     for manifest in manifests:
         data = manifest.data
-        print(f"{data['id']}: {data['owner_agent']} - {data['name']}")
+        print(f"{data['id']}: {data['owner_agent']} - {data['name']} ({manifest.runner}, {manifest.path})")
     return 0
 
 
-def cmd_validate_skills(root: str) -> int:
-    result = validate_all_manifests(root)
+def cmd_validate_skills(root: str, skill_dirs: list[str]) -> int:
+    result = validate_all_manifests(root, skill_dirs=skill_dirs)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["status"] == "pass" else 1
 
@@ -163,6 +168,7 @@ def cmd_run_harness(
     out_dir: str,
     include_real: bool,
     only_skill: str | None,
+    skill_dirs: list[str],
 ) -> int:
     scoreboard = run_harness(
         root=root,
@@ -171,6 +177,7 @@ def cmd_run_harness(
         out_dir=out_dir,
         include_real=include_real,
         only_skill=only_skill,
+        skill_dirs=skill_dirs,
     )
     print(json.dumps(scoreboard, indent=2, sort_keys=True))
     return 0 if scoreboard["status"] == "pass" else 1
@@ -189,6 +196,7 @@ def cmd_run_evaluation_loop(
     out_dir: str,
     threshold_policy_path: str | None,
     include_real: bool,
+    skill_dirs: list[str],
 ) -> int:
     trace = run_evaluation_loop(
         root=root,
@@ -197,6 +205,7 @@ def cmd_run_evaluation_loop(
         out_dir=out_dir,
         threshold_policy_path=threshold_policy_path,
         include_real=include_real,
+        skill_dirs=skill_dirs,
     )
     print(json.dumps(trace, indent=2, sort_keys=True))
     return 0 if trace["release_gate_decides"]["status"] == "promote_to_human_review" else 1

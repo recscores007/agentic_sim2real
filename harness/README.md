@@ -30,6 +30,43 @@ outputs/harness_demo/
 The harness may promote a candidate to human review. It never authorizes
 unattended robot motion.
 
+## Modular Skill Replacement
+
+The harness loads skills in layers:
+
+```text
+skills/            built-in skills
+custom_skills/     automatic local overrides
+--skill-dir        explicit override directories
+```
+
+If two manifests have the same `id`, the later layer replaces the earlier one.
+This lets users replace any skill without changing the evaluator or release
+gate.
+
+Run the included example replacement:
+
+```bash
+./scripts/run_skill_harness.sh \
+  --skill-dir examples/custom_skills \
+  --skill env_preflight
+```
+
+Command-runner skills receive:
+
+- `UR_SKILL_INPUT_JSON`
+- `UR_SKILL_OUTPUT_JSON`
+- `UR_SKILL_OUT_DIR`
+- `UR_SKILL_MANIFEST_DIR`
+- `UR_ROOT`
+- `UR_CONFIG`
+- `UR_DATASET`
+- `UR_SKILL_ID`
+
+They must write the standard skill result JSON. The harness still applies the
+manifest quality gate and release-blocking behavior after the custom command
+returns.
+
 ## Autorun Boundary
 
 A complete `real_data/<session_name>/` folder can drive the offline pipeline
