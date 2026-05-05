@@ -146,7 +146,7 @@ def recommend_domain_randomization(
 
 def recommend_sysid_targets(delay_steps: int, deadband: dict, pose_noise: dict, contact: dict) -> list[str]:
     targets = [
-        "UR10e impedance step response",
+        "robot impedance step response",
         "joint stiffness and damping scale",
         "joint friction and stiction",
         "gear and gripper contact friction",
@@ -166,7 +166,7 @@ def recommend_sysid_targets(delay_steps: int, deadband: dict, pose_noise: dict, 
 
 def human_inputs_needed(config: PipelineConfig) -> list[str]:
     return [
-        "UR calibration file path for the real robot",
+        "robot calibration file path for the physical robot",
         "hand-eye/camera calibration validation result, target under 1 cm pose error",
         "gripper type: robotiq_2f_140 or robotiq_2f_85",
         "policy checkpoint path plus agent.yaml and env.yaml from Isaac Lab training",

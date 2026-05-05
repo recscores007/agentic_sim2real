@@ -4,7 +4,7 @@ File: `calibration.json`
 
 Keep the exact calibration metadata used for the session:
 
-- UR calibration file path
+- Robot calibration file path
 - camera frame
 - robot base frame
 - end-effector frame

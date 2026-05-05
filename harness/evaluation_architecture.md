@@ -16,7 +16,7 @@ The agent creates hypotheses and candidate changes. In this repo, the
 AutoResearch planner proposes:
 
 - perception-noise experiments
-- UR10e SysID experiments
+- robot SysID experiments
 - fixture/generalization experiments
 - action-scale/contact experiments
 
@@ -85,3 +85,12 @@ Thresholds live in `threshold_policy.json` and are divided into:
 
 Agents may propose parameter changes, but the threshold policy decides whether
 the candidate is releasable.
+
+## IsaacLab-Newton Status
+
+The current repository does not run IsaacLab-Newton SysID. The active SysID path
+is the local log-based estimator in `ur_agentic/sysid.py`.
+
+IsaacLab-Newton should be added as a separate portable skill, for example
+`newton_sysid`, that consumes aligned real data, fits parameters, writes
+evidence, and feeds the same evaluator and release gate.

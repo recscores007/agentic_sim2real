@@ -15,6 +15,7 @@ DEFAULTS: dict[str, Any] = {
         "visualize_num_envs": 4,
         "video_length": 800,
         "video_interval": 5000,
+        "observations": ["joint_pos", "joint_vel", "gear_shaft_pos", "gear_shaft_quat"],
     },
     "robot": {
         "arm": "ur10e",

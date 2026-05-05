@@ -29,7 +29,7 @@ def _write_params_yaml(gap: dict[str, Any]) -> str:
     dr = gap["recommendations"]["domain_randomization"]
     action = gap["recommendations"]["action_scale"]
     lines = [
-        "# Candidate parameters generated from real UR gear-assembly logs.",
+        "# Candidate parameters generated from real robot task logs.",
         "# Review before copying into Isaac Lab or Isaac ROS configs.",
         "action_scale_joint_space:",
     ]
@@ -57,7 +57,7 @@ def _write_report(gap: dict[str, Any], plan: dict[str, Any]) -> str:
     summary = gap["summary"]
     action = gap["recommendations"]["action_scale"]
     lines = [
-        "# UR10e Gear Assembly Agentic Sim2Real Report",
+        "# Agentic Sim2Real Report",
         "",
         "## Readiness",
         "",
@@ -88,7 +88,7 @@ def _write_report(gap: dict[str, Any], plan: dict[str, Any]) -> str:
             "",
             "## Safety",
             "",
-            "This report is offline analysis only. Real UR motion must stay behind the human gate.",
+            "This report is offline analysis only. Physical robot motion must stay behind the human gate.",
         ]
     )
     return "\n".join(lines)

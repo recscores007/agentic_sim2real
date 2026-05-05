@@ -3,6 +3,10 @@
 Agents are responsibilities, not magic. Each agent runs skills through the same
 validation harness and must produce evidence before promotion.
 
+The agent roles are intended to be portable. Robot-specific details should live
+in config, adapters, real-data templates, and threshold policy, not in new
+one-off agent roles.
+
 | Agent | Owns | Cannot Do |
 | --- | --- | --- |
 | `orchestrator_agent` | skill order, config wiring, evidence bundle | bypass validators |

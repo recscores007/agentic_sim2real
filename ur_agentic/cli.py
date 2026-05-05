@@ -18,7 +18,7 @@ from .sysid import estimate_gap
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="UR10e gear assembly agentic sim2real helper")
+    parser = argparse.ArgumentParser(description="Agentic sim2real helper for the configured robot task")
     parser.add_argument("--config", default="configs/ur10e_gear_assembly.example.json")
     sub = parser.add_subparsers(dest="cmd", required=True)
 

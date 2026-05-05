@@ -1,8 +1,8 @@
 {
   "id": "sysid_step_response",
-  "name": "UR10e SysID Step Response",
+  "name": "Robot SysID Step Response",
   "owner_agent": "sysid_agent",
-  "description": "Estimate delay, stiction/deadband proxy, contact force, and SysID targets from real logs.",
+  "description": "Estimate robot delay, stiction/deadband proxy, contact force, and SysID targets from real logs.",
   "implementation": "sysid_step_response",
   "depends_on": ["pose_repeatability"],
   "inputs": ["dataset_jsonl", "config"],

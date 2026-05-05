@@ -17,8 +17,8 @@ def build_plan(gap: dict, config: PipelineConfig) -> dict:
             "promote_if": "held-out sim rollouts remain stable and predicted shaft-pose error is inside the 1 cm real gate",
         },
         {
-            "id": "E2_ur10e_sysid_step_response",
-            "question": "Do simulated joint gains/friction produce the same response as the UR impedance controller?",
+            "id": "E2_robot_sysid_step_response",
+            "question": "Do simulated joint gains/friction produce the same response as the real robot controller?",
             "agent_does": "Estimate delay, stiction proxy, stiffness/damping ranges, and a small action-scale sweep from logs.",
             "human_does": "Approve a low-speed supervised step-response packet or provide existing logs.",
             "parameter_change": recs["domain_randomization"]["actuator_and_contact_randomization"],

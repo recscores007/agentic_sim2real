@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "UR Gear Atomic Skill Manifest",
+  "title": "Portable Sim2Real Atomic Skill Manifest",
   "type": "object",
   "required": [
     "id",

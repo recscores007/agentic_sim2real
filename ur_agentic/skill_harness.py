@@ -340,17 +340,29 @@ def _impl_isaaclab_task_check(
     task = choose_task(ctx.config)
     gripper = str(ctx.config.robot.get("gripper_type", ""))
     expected_action_scale = nominal_action_scale(ctx.config)
+    configured_tasks = {
+        str(ctx.config.isaac_lab.get("task_2f140", "")),
+        str(ctx.config.isaac_lab.get("task_2f85", "")),
+    }
+    max_action_scale = float(ctx.config.robot.get("max_action_scale", 0.05))
     failures = []
-    if "UR10e" not in task or "GearAssembly" not in task:
-        failures.append(f"unexpected Isaac Lab task: {task}")
-    if "140" in gripper and abs(expected_action_scale - 0.0325) > 1e-9:
-        failures.append("2F-140 nominal action scale should be 0.0325")
-    if "85" in gripper and abs(expected_action_scale - 0.025) > 1e-9:
-        failures.append("2F-85 nominal action scale should be 0.025")
-    obs = ["joint_pos", "joint_vel", "gear_shaft_pos", "gear_shaft_quat"]
+    if not task or task not in configured_tasks:
+        failures.append(f"selected Isaac Lab task is not in the configured task contract: {task}")
+    if expected_action_scale <= 0 or expected_action_scale > max_action_scale:
+        failures.append(
+            f"nominal action scale {expected_action_scale} must be positive and <= configured max_action_scale {max_action_scale}"
+        )
+    obs = list(ctx.config.isaac_lab.get("observations", ["joint_pos", "joint_vel", "gear_shaft_pos", "gear_shaft_quat"]))
     evidence = _write_json(
         skill_out / "task_contract.json",
-        {"task": task, "gripper_type": gripper, "nominal_action_scale": expected_action_scale, "observations": obs},
+        {
+            "task": task,
+            "configured_tasks": sorted(item for item in configured_tasks if item),
+            "gripper_type": gripper,
+            "max_action_scale": max_action_scale,
+            "nominal_action_scale": expected_action_scale,
+            "observations": obs,
+        },
     )
     return SkillResult(
         skill_id=manifest.skill_id,

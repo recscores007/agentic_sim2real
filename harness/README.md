@@ -30,6 +30,26 @@ outputs/harness_demo/
 The harness may promote a candidate to human review. It never authorizes
 unattended robot motion.
 
+## Autorun Boundary
+
+A complete `real_data/<session_name>/` folder can drive the offline pipeline
+without human intervention after it is converted to `aligned/records.jsonl`.
+That includes skill execution, AutoResearch proposal, evaluator scoring, critic
+review, and release-gate output.
+
+Physical robot motion is not part of offline autorun. The release gate always
+keeps `safe_to_autorun_robot: false`, and the hardware step requires explicit
+human approval.
+
+## SysID Boundary
+
+Current SysID is log-based and implemented in `ur_agentic/sysid.py`. It
+estimates delay, stiction/deadband, pose noise, reset scatter, contact summary,
+and bounded recommendations.
+
+The repo does not yet invoke IsaacLab-Newton. Newton fitting should be added as
+a portable `newton_sysid` skill, not embedded directly into a UR-specific skill.
+
 ## Five-Stage Evaluation
 
 Use the evaluation loop when you want the repo to explain the decision process,

@@ -1,7 +1,9 @@
-# UR10e Gear Assembly Agentic Skills
+# Agentic Sim2Real Skills
 
-This repo turns the Isaac Lab / Isaac ROS UR10e gear assembly tutorial into an
-agentic, skill-based sim2real pipeline.
+This repo turns the Isaac Lab / Isaac ROS UR10e gear assembly tutorial into a
+concrete example of an agentic, skill-based sim2real pipeline. The tutorial is
+UR10e gear assembly, but the skill architecture is intended to become generic
+across robots, tasks, and simulators.
 
 The important change is this:
 
@@ -58,9 +60,76 @@ That means the repo is not just "agent runs scripts." It is an agentic
 sim2real system with explicit skill contracts, self-improvement proposals,
 deterministic validation, critic review, and a hard human gate before hardware.
 
+## Autorun And SysID Status
+
+If you provide a complete `real_data/<session_name>/` folder, the pipeline can
+run the full offline validation chain without human intervention:
+
+```bash
+./scripts/prepare_real_data.sh real_data/<session_name>
+DATASET=real_data/<session_name> ./scripts/run_skill_harness.sh
+DATASET=real_data/<session_name> ./scripts/run_evaluation_loop.sh
+```
+
+That offline chain includes data alignment, atomic skills, the current SysID
+estimator, AutoResearch proposals, evaluator scoring, critic review, and release
+gate decision.
+
+It does not authorize unattended hardware. The real robot remains behind the
+human hardware gate, and `safe_to_autorun_robot` is always false.
+
+Current SysID status:
+
+| Question | Current Answer |
+| --- | --- |
+| Can the offline pipeline autorun from `real_data/<session_name>/`? | Yes, after `prepare_real_data.sh` creates or refreshes `aligned/records.jsonl`. |
+| Can it autorun a physical robot with no human? | No. Hardware is intentionally human-gated. |
+| Is SysID currently using IsaacLab-Newton from `es-rl/IsaacLab-Newton`? | No. The current implementation is the local log-based estimator in `ur_agentic/sysid.py`. |
+| What does current SysID estimate? | Delay, stiction/deadband proxy, contact summary, pose noise, reset scatter, action-scale bounds, and domain-randomization recommendations. |
+| Where should Newton SysID fit? | As a future portable `newton_sysid` skill that consumes aligned real data, runs IsaacLab-Newton fitting, writes fitted parameters/evidence, and feeds the evaluator/release gate. |
+
+## Skill Portability Direction
+
+We should keep many skills only when each one is a portable validation unit. The
+goal is not "one skill per robot" or "one skill per tutorial." The goal is a
+small library of reusable sim2real skill families, with robot/task specifics
+provided by config, adapters, datasets, and thresholds.
+
+So yes, the repo currently has many skills on purpose, but they should stay only
+if they remain useful and generic. They are split because each skill owns a
+different evidence boundary: perception evidence, SysID evidence, policy
+artifact evidence, regression evidence, and hardware approval evidence. Merging
+them would make failures harder to diagnose and would make self-improvement less
+auditable.
+
+Current skills are useful because they map to generic release questions:
+
+| Current Skill | Portable Skill Family | Why Keep It |
+| --- | --- | --- |
+| `env_preflight` | Environment readiness | Every robot pipeline needs tool/runtime checks. |
+| `isaaclab_task_check` | Simulation task contract check | Every sim task needs observation/action/reward/artifact contract validation. |
+| `policy_artifact_audit` | Policy artifact audit | Any learned policy needs reproducible metadata and checkpoint evidence. |
+| `ros_preflight` | Middleware/deployment preflight | ROS is the current adapter; the skill concept generalizes to other deployment stacks. |
+| `pose_repeatability` | Perception repeatability | Any vision or state-estimation pipeline needs measured repeatability. |
+| `sysid_step_response` | System identification evidence | Any sim2real transfer needs actuator, latency, friction, and contact evidence. |
+| `domain_randomization_update` | Sim parameter proposal | Any sim2real pipeline needs bounded randomization updates from data. |
+| `action_scale_sweep` | Controller/action range validation | Any policy deployment needs action scaling and saturation checks. |
+| `autoresearch_planner` | Experiment proposal and ranking | The self-improvement loop should be task-agnostic. |
+| `sim_eval_regression` | Candidate-vs-baseline regression | Every candidate needs regression evidence before promotion. |
+| `release_candidate_gate` | Release decision | Every candidate needs a final policy gate. |
+| `real_robot_gate` | Human hardware approval | Every physical robot pipeline needs explicit supervised approval. |
+
+Portability rule:
+
+```text
+Keep the skill if the question is generic.
+Move robot/task details into config, adapters, templates, and threshold policy.
+Do not create a new skill just because the robot changed.
+```
+
 ## What This Targets
 
-- UR10e arm
+- UR10e arm as the current example robot
 - Robotiq 2F-140 gripper by default, with 2F-85 supported by config
 - Isaac Lab task `Isaac-Deploy-GearAssembly-UR10e-2F140-v0`
 - Isaac ROS Manipulation gear assembly workflow with cuMotion
@@ -74,7 +143,7 @@ Sources double checked:
 - Isaac ROS gear assembly deployment tutorial:
   https://nvidia-isaac-ros.github.io/reference_workflows/isaac_for_manipulation/tutorials/sim_to_real/tutorial_gear_assembly.html
 
-Tutorial facts encoded in the skill contracts:
+Tutorial facts encoded in the config and skill contracts:
 
 - Policy observations: `joint_pos`, `joint_vel`, `gear_shaft_pos`, `gear_shaft_quat`
 - Shaft pose source: FoundationPose + RealSense depth
@@ -180,7 +249,7 @@ real logs
 For this task, AutoResearch focuses on:
 
 - perception noise around `gear_shaft_pos` and `gear_shaft_quat`
-- UR10e stiffness, damping, friction, stiction, and delay
+- robot stiffness, damping, friction, stiction, and delay
 - base/gear pose randomization coverage
 - action scale vs contact force
 - sim regression before any hardware run
@@ -298,7 +367,7 @@ Fill in:
 - `camera_data/index.csv`: color/depth image paths or frame provenance
 - `contact_data/contact.csv`: force or force-proxy samples
 - `episode_labels/labels.csv`: success, failure mode, notes
-- `calibration/calibration.json`: UR calibration, camera frames, hand-eye metadata
+- `calibration/calibration.json`: robot calibration, camera frames, hand-eye metadata
 
 Convert raw subfolders into the pipeline format:
 

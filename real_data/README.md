@@ -1,7 +1,8 @@
 # Real Data Folder
 
-This folder is where you put real UR10e gear-assembly data before running the
-agentic sim2real pipeline.
+This folder is where you put real robot task data before running the agentic
+sim2real pipeline. The checked-in example is UR10e gear assembly, but the folder
+layout is meant to stay portable.
 
 The pipeline needs one aligned file:
 
@@ -63,7 +64,7 @@ real_data/<session_name>/
 | `episode_labels/labels.csv` | Strongly recommended | Success/failure labels and failure modes |
 | `contact_data/contact.csv` | Recommended | Contact force or force proxy |
 | `camera_data/index.csv` | Recommended | Image/depth file provenance |
-| `calibration/calibration.json` | Recommended | UR calibration, camera intrinsics/extrinsics, frame names |
+| `calibration/calibration.json` | Recommended | Robot calibration, camera intrinsics/extrinsics, frame names |
 
 ## What The Human Provides
 

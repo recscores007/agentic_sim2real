@@ -18,7 +18,7 @@ PY
 )"
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  echo "UR gear environment loaded from ${UR_GEAR_CONFIG}"
+  echo "Agentic sim2real environment loaded from ${UR_GEAR_CONFIG}"
   echo "ISAAC_LAB_ROOT=${ISAAC_LAB_ROOT}"
   echo "ISAAC_ROS_WS=${ISAAC_ROS_WS}"
   echo "GEAR_TASK=${GEAR_TASK}"
