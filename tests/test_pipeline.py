@@ -104,19 +104,33 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(scorecard["mode"], "characterization")
             self.assertIn("release_gap_score", scorecard)
             self.assertIn("transfer_readiness_score", scorecard)
+            self.assertIn("run_version", scorecard)
+            self.assertIn("transfer_readiness_breakdown", scorecard)
+            self.assertIn("release_gap_breakdown", scorecard)
             self.assertIn("characterization", scorecard)
             self.assertIn("policy_release", scorecard)
             pipeline_output = json.loads((Path(tmp) / "pipeline_output.json").read_text())
             self.assertEqual(pipeline_output["schema"], "agentic_sim2real.slide_contract.v1.pipeline_output")
             self.assertIn("release_gap_score", pipeline_output)
+            self.assertEqual(pipeline_output["run_version"], scorecard["run_version"])
             self.assertFalse(pipeline_output["safe_to_autorun_robot"])
             artifacts = scoreboard["artifacts"]
-            self.assertTrue(Path(artifacts["ui"]).exists())
-            self.assertTrue(Path(artifacts["state"]).exists())
+            for key in ["ui", "state", "run_record", "real_data_manifest"]:
+                self.assertTrue(Path(artifacts[key]).exists())
             ui_state = json.loads(Path(artifacts["state"]).read_text())
             self.assertEqual(ui_state["schema_version"], "agentic_sim2real.pipeline_ui.v1")
             self.assertEqual(ui_state["mode"], "characterization")
             self.assertIn("workflow", ui_state)
+            self.assertIn("run_record", ui_state)
+            run_record = json.loads(Path(artifacts["run_record"]).read_text())
+            self.assertEqual(run_record["schema"], "agentic_sim2real.slide_contract.v1.run_record")
+            self.assertEqual(run_record["run"]["run_version"], scorecard["run_version"])
+            self.assertGreater(run_record["lineage"]["real_data_fed"]["file_count"], 0)
+            self.assertIn("policy_checkpoint", run_record["lineage"])
+            self.assertIn("transfer_readiness", run_record["score_breakdown"])
+            real_data_manifest = json.loads(Path(artifacts["real_data_manifest"]).read_text())
+            self.assertEqual(real_data_manifest["schema"], "agentic_sim2real.slide_contract.v1.real_data_manifest")
+            self.assertGreater(len(real_data_manifest["files"]), 0)
 
     def test_stronger_preflight_reports_sysid_backends(self) -> None:
         cfg = load_config(ROOT / "configs" / "ur10e_gear_assembly.example.json")
@@ -266,7 +280,7 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("characterization", state)
             self.assertIn("policy_release", state)
             artifacts = summary["scoreboard"]["artifacts"]
-            for key in ["rollout_data", "pipeline_input", "scorecard", "pipeline_output", "ui", "state"]:
+            for key in ["rollout_data", "pipeline_input", "scorecard", "pipeline_output", "run_record", "real_data_manifest", "ui", "state"]:
                 self.assertTrue(Path(artifacts[key]).exists())
             final_output = json.loads(Path(artifacts["pipeline_output"]).read_text())
             self.assertEqual(final_output["schema"], "agentic_sim2real.slide_contract.v1.pipeline_output")

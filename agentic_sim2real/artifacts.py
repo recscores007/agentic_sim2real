@@ -5,6 +5,7 @@ import json
 import os
 import statistics
 from collections import Counter, defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -136,6 +137,57 @@ def write_pipeline_output_artifacts(
     }
 
 
+def write_run_record_artifacts(
+    dataset_path: str | Path,
+    config: PipelineConfig,
+    out_dir: str | Path,
+    results: dict[str, Any],
+    scoreboard: dict[str, Any],
+    *,
+    config_path: str | Path | None = None,
+    pipeline_input: dict[str, Any],
+    scorecard: dict[str, Any],
+    pipeline_output: dict[str, Any],
+    artifact_paths: dict[str, str],
+    trace: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    out = Path(out_dir).expanduser().resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    records = load_records(dataset_path)
+    real_data_manifest = build_real_data_manifest(dataset_path, config, records)
+    manifest_path = out / "real_data_manifest.json"
+    json_path = out / "run_record.json"
+    md_path = out / "run_record.md"
+    _write_json(manifest_path, real_data_manifest)
+
+    payload = build_run_record(
+        dataset_path,
+        config,
+        records,
+        _result_dicts(results),
+        scoreboard,
+        pipeline_input=pipeline_input,
+        scorecard=scorecard,
+        pipeline_output=pipeline_output,
+        real_data_manifest=real_data_manifest,
+        artifact_paths={
+            **artifact_paths,
+            "real_data_manifest": str(manifest_path),
+            "run_record": str(json_path),
+            "run_record_view": str(md_path),
+        },
+        config_path=config_path,
+        trace=trace,
+    )
+    _write_json(json_path, payload)
+    md_path.write_text(render_run_record_markdown(payload) + "\n")
+    return {
+        "run_record": str(json_path),
+        "run_record_view": str(md_path),
+        "real_data_manifest": str(manifest_path),
+    }
+
+
 def write_slide_contract_bundle(
     dataset_path: str | Path,
     config: PipelineConfig,
@@ -184,7 +236,155 @@ def write_slide_contract_bundle(
             run_id=run_id,
         )
     )
+    pipeline_output = json.loads(Path(paths["pipeline_output"]).read_text())
+    paths.update(
+        write_run_record_artifacts(
+            dataset_path,
+            config,
+            out_dir,
+            results,
+            scoreboard,
+            config_path=config_path,
+            pipeline_input=pipeline_input,
+            scorecard=scorecard,
+            pipeline_output=pipeline_output,
+            artifact_paths=paths,
+            trace=trace,
+        )
+    )
     return paths
+
+
+def build_real_data_manifest(
+    dataset_path: str | Path,
+    config: PipelineConfig,
+    records: list[Record],
+) -> dict[str, Any]:
+    source = Path(dataset_path).expanduser()
+    canonical = _canonical_records_path(source)
+    rollout_data = build_rollout_data(dataset_path, config, records)
+    return {
+        "schema": f"{SCHEMA_VERSION}.real_data_manifest",
+        "description": "Complete file-and-hash manifest for the real data fed to this sim2real run.",
+        "source_path": str(source),
+        "source_exists": source.exists(),
+        "source_type": "directory" if source.is_dir() else "file" if source.exists() else "missing",
+        "source_sha256": _dataset_hash(source),
+        "canonical_records": {
+            "path": str(canonical) if canonical else None,
+            "sha256": _path_hash(canonical) if canonical else None,
+            "records": len(records),
+            "episodes": len({record.episode_index for record in records}),
+        },
+        "record_contract": {
+            "required_fields": ["episode_index", "timestamp", "action", "joint_state"],
+            "optional_fields": ["joint_velocity", "ee_pose", "object_pose_estimate", "object_pose_reference", "contact_force", "success", "failure_mode"],
+        },
+        "files": _file_manifest(source),
+        "rollouts": [
+            {
+                "rollout_id": rollout["rollout_id"],
+                "episode_index": rollout["episode_index"],
+                "record_count": rollout["record_count"],
+                "sha256": rollout["sha256"],
+                "streams": sorted(rollout.get("streams", {})),
+                "outcome": rollout.get("outcome", {}),
+                "calibration": rollout.get("calibration"),
+            }
+            for rollout in rollout_data.get("rollouts", [])
+        ],
+    }
+
+
+def build_run_record(
+    dataset_path: str | Path,
+    config: PipelineConfig,
+    records: list[Record],
+    results: dict[str, dict[str, Any]],
+    scoreboard: dict[str, Any],
+    *,
+    pipeline_input: dict[str, Any],
+    scorecard: dict[str, Any],
+    pipeline_output: dict[str, Any],
+    real_data_manifest: dict[str, Any],
+    artifact_paths: dict[str, str],
+    config_path: str | Path | None = None,
+    trace: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    run_id = str(scorecard.get("run_id") or _run_id(dataset_path, config_path))
+    run_version = str(scorecard.get("run_version") or _run_version(run_id))
+    return {
+        "schema": f"{SCHEMA_VERSION}.run_record",
+        "description": "Versioned audit record for one sim2real run: inputs, lineage, score breakdowns, outputs, and gates.",
+        "run": {
+            "run_id": run_id,
+            "run_version": run_version,
+            "created_at_utc": _utc_now(),
+            "task": _task_name(config),
+            "mode": _pipeline_mode(config),
+            "release_profile": scoreboard.get("release_profile"),
+            "review_scope": scoreboard.get("review_scope"),
+            "git_sha": scorecard.get("git_sha"),
+            "output_status": pipeline_output.get("status"),
+            "safe_to_autorun_robot": False,
+        },
+        "lineage": {
+            "config": {
+                "path": str(Path(config_path).expanduser()) if config_path else None,
+                "sha256": _path_hash(config_path) if config_path else None,
+            },
+            "real_data_fed": {
+                "manifest": "real_data_manifest.json",
+                "source_path": real_data_manifest.get("source_path"),
+                "source_sha256": real_data_manifest.get("source_sha256"),
+                "canonical_records": real_data_manifest.get("canonical_records"),
+                "file_count": len(real_data_manifest.get("files", [])),
+                "rollout_count": len(real_data_manifest.get("rollouts", [])),
+                "rollout_hashes": [
+                    {"rollout_id": item.get("rollout_id"), "sha256": item.get("sha256")}
+                    for item in real_data_manifest.get("rollouts", [])
+                ],
+            },
+            "policy_checkpoint": _policy_checkpoint_record(config, config_path),
+            "retraining": _retraining_record(config, config_path),
+        },
+        "score_breakdown": {
+            "transfer_readiness": scorecard.get("transfer_readiness_breakdown", {}),
+            "release_gap": scorecard.get("release_gap_breakdown", {}),
+            "characterization": scorecard.get("characterization", {}),
+            "policy_release": scorecard.get("policy_release", {}),
+        },
+        "pipeline_contract": {
+            "input_hash": pipeline_input.get("input_hash"),
+            "pipeline_input": "pipeline_input.json",
+            "scorecard": "scorecard.json",
+            "pipeline_output": "pipeline_output.json",
+            "real_data_manifest": "real_data_manifest.json",
+        },
+        "artifacts": dict(sorted(artifact_paths.items())),
+        "skills": {
+            skill_id: {
+                "status": result.get("status"),
+                "quality_score": result.get("quality_score"),
+                "confidence": result.get("confidence"),
+                "evidence_files": result.get("evidence_files", []),
+            }
+            for skill_id, result in sorted(results.items())
+        },
+        "release": {
+            "offline_validation_status": scoreboard.get("offline_validation_status", scoreboard.get("status")),
+            "human_review_readiness": scoreboard.get("human_review_readiness"),
+            "release_candidate_ready": bool(scoreboard.get("release_candidate_ready", False)),
+            "hardware_approval_status": scoreboard.get("hardware_approval_status", "not_requested"),
+            "safe_to_autorun_robot": False,
+            "blocking_failures": scoreboard.get("blocking_failures", []),
+        },
+        "trace": {
+            "present": bool(trace),
+            "release_gate_status": (trace or {}).get("release_gate_decides", {}).get("status") if trace else None,
+            "human_gate_status": (trace or {}).get("human_approves_hardware", {}).get("status") if trace else None,
+        },
+    }
 
 
 def build_rollout_data(dataset_path: str | Path, config: PipelineConfig, records: list[Record]) -> dict[str, Any]:
@@ -299,6 +499,7 @@ def build_scorecard(
     transfer_score = float(plan["transfer_score"]["score_0_to_1"])
     release_gap_score = round(max(0.0, 1.0 - transfer_score), 3)
     previous_gap = _previous_gap(previous_scorecard)
+    release_gap_target = _release_gap_target(config)
     real_success = summary.get("success_rate")
     sim_success = _sim_success_rate(results)
     regression_pp = _regression_pp(results)
@@ -310,11 +511,14 @@ def build_scorecard(
         "task": _task_name(config),
         "mode": _pipeline_mode(config),
         "run_id": run_id or _run_id(dataset_path, config_path),
+        "run_version": _run_version(run_id or _run_id(dataset_path, config_path)),
         "git_sha": _git_sha(Path(config_path).parent if config_path else Path.cwd()),
         "transfer_readiness_score": transfer_score,
+        "transfer_readiness_breakdown": _transfer_readiness_breakdown(plan),
         "release_gap_score": release_gap_score,
         "release_gap_score_delta": None if previous_gap is None else round(release_gap_score - previous_gap, 3),
-        "release_gap_target": _release_gap_target(config),
+        "release_gap_target": release_gap_target,
+        "release_gap_breakdown": _release_gap_breakdown(transfer_score, release_gap_score, release_gap_target),
         "sim2real_gap": release_gap_score,
         "sim2real_gap_delta": None if previous_gap is None else round(release_gap_score - previous_gap, 3),
         "score_meaning": {
@@ -373,6 +577,7 @@ def build_pipeline_output(
         "task": _task_name(config),
         "mode": _pipeline_mode(config),
         "release_id": release_id,
+        "run_version": scorecard.get("run_version"),
         "status": status,
         "policy_ckpt": _policy_checkpoint(config),
         "sim_config": {
@@ -543,6 +748,56 @@ def render_pipeline_output_markdown(payload: dict[str, Any]) -> str:
             lines.append(f"- {change['skill']}: {change['patch']}")
     else:
         lines.append("- none")
+    return "\n".join(lines)
+
+
+def render_run_record_markdown(payload: dict[str, Any]) -> str:
+    run = payload.get("run", {})
+    lineage = payload.get("lineage", {})
+    real_data = lineage.get("real_data_fed", {})
+    policy = lineage.get("policy_checkpoint", {})
+    retraining = lineage.get("retraining", {})
+    transfer = payload.get("score_breakdown", {}).get("transfer_readiness", {})
+    release_gap = payload.get("score_breakdown", {}).get("release_gap", {})
+    lines = [
+        "# Versioned Run Record",
+        "",
+        f"- Run ID: `{run.get('run_id')}`",
+        f"- Run version: `{run.get('run_version')}`",
+        f"- Created: {run.get('created_at_utc')}",
+        f"- Task: {run.get('task')}",
+        f"- Mode: {run.get('mode')}",
+        f"- Output status: {run.get('output_status')}",
+        f"- Safe to autorun robot: {run.get('safe_to_autorun_robot')}",
+        "",
+        "## Real Data Fed",
+        "",
+        f"- Source: `{real_data.get('source_path')}`",
+        f"- Source SHA256: `{real_data.get('source_sha256')}`",
+        f"- Canonical records: {real_data.get('canonical_records')}",
+        f"- Files recorded: {real_data.get('file_count')}",
+        f"- Rollouts recorded: {real_data.get('rollout_count')}",
+        "",
+        "## Policy / Retraining",
+        "",
+        f"- Policy checkpoint: `{policy.get('configured')}`",
+        f"- Policy SHA256: `{policy.get('sha256')}`",
+        f"- Retraining requested: {retraining.get('requested')}",
+        f"- Source checkpoint: `{retraining.get('source_checkpoint')}`",
+        f"- Target checkpoint: `{retraining.get('target_checkpoint')}`",
+        "",
+        "## Score Breakdown",
+        "",
+        f"- Transfer readiness score: {transfer.get('score_0_to_1')}",
+        f"- Release gap score: {release_gap.get('release_gap_score')}",
+        f"- Release gap target: {release_gap.get('target')}",
+        f"- Release gap status: {release_gap.get('status')}",
+        "",
+        "## Artifacts",
+        "",
+    ]
+    for key, path in payload.get("artifacts", {}).items():
+        lines.append(f"- {key}: `{path}`")
     return "\n".join(lines)
 
 
@@ -836,6 +1091,53 @@ def _release_gap_target(config: PipelineConfig) -> float | None:
     )
 
 
+def _transfer_readiness_breakdown(plan: dict[str, Any]) -> dict[str, Any]:
+    transfer = dict(plan.get("transfer_score", {}))
+    weights = {
+        "episode_score": 0.20,
+        "success_component": 0.20,
+        "delay_confidence": 0.15,
+        "deadband_confidence": 0.15,
+        "pose_score": 0.15,
+        "contact_score": 0.15,
+    }
+    components = []
+    for key, weight in weights.items():
+        value = float(transfer.get(key, 0.0) or 0.0)
+        components.append(
+            {
+                "component": key,
+                "weight": weight,
+                "value": round(value, 3),
+                "weighted_contribution": round(weight * value, 3),
+            }
+        )
+    return {
+        "score_0_to_1": transfer.get("score_0_to_1"),
+        "interpretation": transfer.get("interpretation"),
+        "formula": "sum(weight * component_value)",
+        "components": components,
+        "note": "This is an internal evidence/readiness score, not an industry-standard physical sim2real metric.",
+    }
+
+
+def _release_gap_breakdown(
+    transfer_readiness_score: float,
+    release_gap_score: float,
+    target: float | None,
+) -> dict[str, Any]:
+    margin = None if target is None else round(float(target) - release_gap_score, 3)
+    return {
+        "formula": "release_gap_score = max(0, 1 - transfer_readiness_score)",
+        "transfer_readiness_score": round(float(transfer_readiness_score), 3),
+        "release_gap_score": round(float(release_gap_score), 3),
+        "target": target,
+        "margin_to_target": margin,
+        "status": "no_target" if target is None else "meets_target" if release_gap_score <= float(target) else "above_target",
+        "note": "Lower is better. This is a release-readiness gap and not a physical distance.",
+    }
+
+
 def _characterization_metrics(gap: dict[str, Any], plan: dict[str, Any], results: dict[str, dict[str, Any]]) -> dict[str, Any]:
     summary = gap.get("summary", {})
     delay = gap.get("delay", {})
@@ -926,6 +1228,115 @@ def _skill_status(results: dict[str, dict[str, Any]], skill_id: str) -> str:
     return str(results.get(skill_id, {}).get("status", "unknown"))
 
 
+def _policy_checkpoint_record(config: PipelineConfig, config_path: str | Path | None) -> dict[str, Any]:
+    configured = _policy_checkpoint(config)
+    resolved = _resolve_artifact_path(configured, config_path)
+    exists = resolved.exists() if resolved else False
+    return {
+        "configured": configured,
+        "resolved_path": str(resolved) if resolved else None,
+        "exists": exists,
+        "path_type": "directory" if exists and resolved.is_dir() else "file" if exists else "missing",
+        "sha256": _dataset_hash(resolved) if exists else None,
+        "file_count": len(_file_manifest(resolved)) if exists else 0,
+        "files": _file_manifest(resolved) if exists else [],
+        "using_sample_artifacts": "golden/sample_inputs" in configured.replace("\\", "/"),
+    }
+
+
+def _retraining_record(config: PipelineConfig, config_path: str | Path | None) -> dict[str, Any]:
+    policy_cfg = dict(config.policy)
+    retraining_cfg = policy_cfg.get("retraining", {})
+    if not isinstance(retraining_cfg, dict):
+        retraining_cfg = {}
+    task_cfg = dict(config.task_spec)
+    requested = bool(
+        retraining_cfg.get("enabled")
+        or policy_cfg.get("retrain")
+        or task_cfg.get("retrain")
+        or policy_cfg.get("training_command")
+        or policy_cfg.get("retrained_checkpoint")
+    )
+    source_checkpoint = str(
+        retraining_cfg.get("source_checkpoint")
+        or policy_cfg.get("source_checkpoint")
+        or policy_cfg.get("artifact_dir")
+        or task_cfg.get("policy_ckpt")
+        or ""
+    )
+    target_checkpoint = str(
+        retraining_cfg.get("target_checkpoint")
+        or policy_cfg.get("retrained_checkpoint")
+        or task_cfg.get("retrained_policy_ckpt")
+        or ""
+    )
+    target_path = _resolve_artifact_path(target_checkpoint, config_path) if target_checkpoint else None
+    return {
+        "requested": requested,
+        "source_checkpoint": source_checkpoint,
+        "target_checkpoint": target_checkpoint or None,
+        "target_checkpoint_resolved": str(target_path) if target_path else None,
+        "target_checkpoint_exists": bool(target_path and target_path.exists()),
+        "training_command": retraining_cfg.get("command") or policy_cfg.get("training_command") or config.isaac_lab.get("train_command"),
+        "training_run_id": retraining_cfg.get("training_run_id") or policy_cfg.get("training_run_id"),
+        "notes": "When retraining is enabled, this record captures the input checkpoint and expected retrained checkpoint lineage.",
+    }
+
+
+def _resolve_artifact_path(value: str | Path | None, config_path: str | Path | None) -> Path | None:
+    if value in (None, "", "not_configured"):
+        return None
+    path = Path(str(value)).expanduser()
+    if path.is_absolute():
+        return path
+    root = _repo_root(Path(config_path).expanduser().parent if config_path else Path.cwd())
+    candidate = root / path
+    if candidate.exists():
+        return candidate
+    config_parent = Path(config_path).expanduser().parent if config_path else Path.cwd()
+    fallback = config_parent / path
+    return fallback if fallback.exists() else candidate
+
+
+def _repo_root(start: Path) -> Path:
+    path = start.expanduser().resolve()
+    for candidate in [path, *path.parents]:
+        if (candidate / ".git").exists():
+            return candidate
+    return path
+
+
+def _canonical_records_path(source: Path) -> Path | None:
+    if source.is_dir():
+        for candidate in [source / "aligned" / "records.jsonl", source / "records.jsonl"]:
+            if candidate.exists():
+                return candidate
+        return None
+    return source if source.exists() else None
+
+
+def _file_manifest(source: Path | None) -> list[dict[str, Any]]:
+    if not source or not source.exists():
+        return []
+    if source.is_file():
+        files = [source]
+        root = source.parent
+    else:
+        files = sorted(item for item in source.rglob("*") if item.is_file())
+        root = source
+    manifest = []
+    for file_path in files:
+        manifest.append(
+            {
+                "relative_path": file_path.relative_to(root).as_posix(),
+                "path": str(file_path),
+                "size_bytes": file_path.stat().st_size,
+                "sha256": _path_hash(file_path),
+            }
+        )
+    return manifest
+
+
 def _baseline_success_from_results(results: dict[str, dict[str, Any]]) -> float | None:
     baseline = results.get("sim_eval_regression", {}).get("metrics", {}).get("baseline", {})
     if isinstance(baseline, dict) and baseline.get("success_rate") is not None:
@@ -975,6 +1386,15 @@ def _git_sha(start: Path) -> str:
 def _run_id(dataset_path: str | Path, config_path: str | Path | None) -> str:
     seed = f"{Path(dataset_path).expanduser()}::{config_path or ''}::{_dataset_hash(dataset_path)}"
     return "run_" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:8]
+
+
+def _run_version(run_id: str) -> str:
+    suffix = str(run_id).replace("run_", "")[:8] or "unknown"
+    return f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{suffix}"
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _round_or_none(value: Any) -> float | None:

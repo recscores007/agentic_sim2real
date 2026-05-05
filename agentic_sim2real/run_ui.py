@@ -30,6 +30,7 @@ def write_pipeline_ui(
     rollout_data = _read_json(run / "rollout_data.json")
     scorecard = _read_json(run / "scorecard.json")
     pipeline_output = _read_json(run / "pipeline_output.json")
+    run_record = _read_json(run / "run_record.json")
     scoreboard = _read_json(run / "scoreboard.json")
     trace = _read_json(run / "evaluation_trace.json")
     journal = _read_journal(run, journal_path)
@@ -41,6 +42,7 @@ def write_pipeline_ui(
         "run": {
             "dir": str(run),
             "status": run_status,
+            "version": run_record.get("run", {}).get("run_version") or scorecard.get("run_version"),
             "safe_to_autorun_robot": False,
         },
         "mode": mode,
@@ -55,6 +57,7 @@ def write_pipeline_ui(
         "rollout_summary": _rollout_summary(rollout_data),
         "scorecard": scorecard,
         "pipeline_output": pipeline_output,
+        "run_record": run_record,
         "scoreboard": _scoreboard_summary(scoreboard),
         "characterization": scorecard.get("characterization", {}),
         "policy_release": scorecard.get("policy_release", {}),
@@ -315,6 +318,8 @@ const rolePill = (owner) => {{
   return pill(owner || "Agent", "agent");
 }};
 const score = state.scorecard || {{}};
+const runRecord = state.run_record || {{}};
+const lineage = runRecord.lineage || {{}};
 const input = state.pipeline_input || {{}};
 const out = state.pipeline_output || {{}};
 const rollout = state.rollout_summary || {{}};
@@ -324,6 +329,7 @@ const policy = state.policy_release || {{}};
 const gap = score.release_gap_score ?? score.sim2real_gap;
 document.getElementById("header-pills").innerHTML = [
   pill(state.mode),
+  pill(state.run.version || "unversioned"),
   pill(board.release_profile || "profile n/a"),
   pill(`offline ${{board.offline_validation_status || board.status || "pending"}}`),
   pill(`hardware ${{board.hardware_approval_status || "not_requested"}}`),
@@ -336,7 +342,7 @@ const metricHtml = `
     <div class="metric"><span>Transfer readiness</span><b>${{num(score.transfer_readiness_score)}}</b><div class="note">higher is better</div></div>
     <div class="metric"><span>Release gap score</span><b>${{num(gap)}}</b><div class="note">target ${{fmt(score.release_gap_target ?? input.goal?.release_gap_target)}} from config</div></div>
     <div class="metric"><span>Real data</span><b>${{fmt(rollout.rollout_count)}} rollouts</b><div class="note">${{fmt(rollout.streams?.join(", "))}}</div></div>
-    <div class="metric"><span>Real success</span><b>${{pct(rollout.success_rate)}}</b><div class="note">policy-release signal only</div></div>
+    <div class="metric"><span>Run version</span><b>${{fmt(state.run.version)}}</b><div class="note">versioned audit record</div></div>
   </div>
 </section>`;
 
@@ -381,6 +387,20 @@ const releaseHtml = `
   <p class="note">Used after a candidate policy exists. Human approval is still required for supervised hardware motion.</p>
 </section>`;
 
+const recordHtml = `
+<section class="panel wide">
+  <h2>Versioned Run Record</h2>
+  <div class="subgrid">
+    <div class="kv"><label>Real-data source</label><strong>${{fmt(lineage.real_data_fed?.source_path)}}</strong></div>
+    <div class="kv"><label>Real-data SHA256</label><strong>${{fmt(lineage.real_data_fed?.source_sha256)}}</strong></div>
+    <div class="kv"><label>Files recorded</label><strong>${{fmt(lineage.real_data_fed?.file_count)}}</strong></div>
+    <div class="kv"><label>Policy checkpoint</label><strong>${{fmt(lineage.policy_checkpoint?.configured)}}</strong></div>
+    <div class="kv"><label>Policy SHA256</label><strong>${{fmt(lineage.policy_checkpoint?.sha256)}}</strong></div>
+    <div class="kv"><label>Retraining requested</label><strong>${{fmt(lineage.retraining?.requested)}}</strong></div>
+  </div>
+  <p class="note"><code>run_record.json</code> links this run version to the exact real-data manifest, policy checkpoint, score breakdowns, skill evidence, and release gates.</p>
+</section>`;
+
 const skills = (board.skills || []).map(row => `<tr>
   <td><code>${{row.skill_id}}</code></td>
   <td>${{pill(row.status)}}</td>
@@ -400,6 +420,7 @@ document.getElementById("app").innerHTML = [
   metricHtml,
   workflowHtml,
   `<div class="lane-grid">${{charHtml}}${{releaseHtml}}</div>`,
+  recordHtml,
   `<section class="panel wide"><h2>Skill Validation</h2><table><thead><tr><th>Skill</th><th>Status</th><th>Score</th><th>Confidence</th><th>Release blocking</th><th>Human required</th></tr></thead><tbody>${{skills}}</tbody></table></section>`,
   `<section class="panel wide"><h2>LLM Orchestrator Journal</h2><div class="journal">${{journal || "<span class='note'>No LLM journal found for this run.</span>"}}</div></section>`,
   `<section class="panel wide"><h2>Score Meaning</h2><p class="note">${{fmt(score.score_meaning?.release_gap_score)}} ${{fmt(score.score_meaning?.target_source)}} Formula: ${{fmt(score.score_meaning?.formula)}}</p></section>`

@@ -153,6 +153,8 @@ outputs/<run>/llm_orchestrator/steps/step_###_decision.json
 outputs/<run>/llm_orchestrator/scorecards/step_###_<skill_id>/scorecard.json
 outputs/<run>/ui/index.html
 outputs/<run>/ui/state.json
+outputs/<run>/run_record.json
+outputs/<run>/real_data_manifest.json
 outputs/<run>/scoreboard.json
 outputs/<run>/skills/<skill_id>/
 ```
@@ -174,6 +176,8 @@ outputs/<run>/rollout_data.json      # rollout record per episode
 outputs/<run>/pipeline_input.json    # task spec the agent reads
 outputs/<run>/scorecard.json         # unified run scorecard
 outputs/<run>/pipeline_output.json   # final release artifact
+outputs/<run>/run_record.json        # versioned audit record for this run
+outputs/<run>/real_data_manifest.json # every real-data file path, size, and hash
 ```
 
 The same JSON drives the agent's next action and the human review view.
@@ -182,8 +186,10 @@ The same JSON drives the agent's next action and the human review view.
 | --- | --- |
 | `rollout_data.json` | `rollout_id`, `task`, `scenario`, `seed`, `streams`, `labels`, `outcome`, `calibration`, `sha256` |
 | `pipeline_input.json` | `task`, `mode`, `goal`, `scenarios`, `policy_ckpt`, `sim_config`, `real_data`, `skills_allowed`, `budget`, `kill_criteria`, `owner`, `submitted` |
-| `scorecard.json` | `task`, `mode`, `run_id`, `git_sha`, `transfer_readiness_score`, `release_gap_score`, `characterization`, `policy_release`, `success_rate`, `regression_pp`, `per_skill`, `failure_modes`, `cost`, `verdict` |
+| `scorecard.json` | `task`, `mode`, `run_id`, `run_version`, `git_sha`, `transfer_readiness_score`, `transfer_readiness_breakdown`, `release_gap_score`, `release_gap_breakdown`, `characterization`, `policy_release`, `success_rate`, `regression_pp`, `per_skill`, `failure_modes`, `cost`, `verdict` |
 | `pipeline_output.json` | `task`, `mode`, `release_id`, `status`, `policy_ckpt`, `sim_config`, `release_gap_score`, `success_real`, `characterization`, `policy_release`, `changes`, `used`, `provenance`, `deploy` |
+| `run_record.json` | `run`, `lineage.real_data_fed`, `lineage.policy_checkpoint`, `lineage.retraining`, `score_breakdown`, `pipeline_contract`, `artifacts`, `skills`, `release` |
+| `real_data_manifest.json` | `source_path`, `source_sha256`, `canonical_records`, `record_contract`, `files`, `rollouts` |
 
 The rule is simple: if the LLM cannot point to a skill result, metric,
 scoreboard entry, critic finding, or release decision, it is only a suggestion.
@@ -193,6 +199,13 @@ field is `release_gap_score`. It is a normalized release-readiness gap, not a
 physical industry-standard sim2real distance. Its target comes from user config
 or release policy: `task_spec.goal.release_gap_target`, `task_spec.goal.gap_target`,
 or `agent.gap_target`.
+
+Every run gets a `run_version` like `20260505T074502Z-3b9f0f28`.
+`run_record.json` is the audit anchor for that version. It records the exact
+real data that was fed through the pipeline, including a complete file manifest
+with SHA256 hashes, the canonical `records.jsonl` hash, rollout hashes, the
+policy checkpoint files and hashes, retraining source/target checkpoint metadata
+when configured, and the transfer-readiness/release-gap component breakdowns.
 
 ## Release Profiles
 
