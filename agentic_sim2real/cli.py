@@ -66,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     harness.add_argument("--skill", default=None, help="Run one skill by id")
     harness.add_argument("--skill-dir", action="append", default=[], help="Overlay directory with replacement skills")
     harness.add_argument("--include-real", action="store_true", help="Include real-robot skills after human approval")
+    harness.add_argument("--audience", choices=["customer", "developer"], default=None, help="Hub UI audience")
 
     eval_loop = sub.add_parser("run-evaluation-loop", help="Run LLM/Agent/Evaluator/Critic/Release/Human trace")
     eval_loop.add_argument("--root", default=".")
@@ -78,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     eval_loop.add_argument("--llm-command-json", default=None, help="JSON list command for command-backed LLM provider")
     eval_loop.add_argument("--max-steps", type=int, default=None)
     eval_loop.add_argument("--gap-hint", action="append", default=[], help="Initial sim2real gap focus, e.g. perception, actuator, contact, latency, domain_randomization, deployment, policy")
+    eval_loop.add_argument("--audience", choices=["customer", "developer"], default=None, help="Hub UI audience")
 
     llm_loop = sub.add_parser("run-llm-loop", help="Run the LLM-orchestrated skill loop")
     llm_loop.add_argument("--root", default=".")
@@ -89,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     llm_loop.add_argument("--llm-command-json", default=None, help="JSON list command for command-backed LLM provider")
     llm_loop.add_argument("--max-steps", type=int, default=None)
     llm_loop.add_argument("--gap-hint", action="append", default=[], help="Initial sim2real gap focus, e.g. perception, actuator, contact, latency, domain_randomization, deployment, policy")
+    llm_loop.add_argument("--audience", choices=["customer", "developer"], default=None, help="Hub UI audience")
 
     sub.add_parser("check-real-gate", help="Fail unless the real-robot human gate env var is set")
 
@@ -114,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "prepare-real-data":
         return cmd_prepare_real_data(args.session, args.out, args.tolerance_s, args.root, args.embodiment)
     if args.cmd == "run-harness":
-        return cmd_run_harness(args.root, args.config, args.dataset, args.out, args.include_real, args.skill, args.skill_dir)
+        return cmd_run_harness(args.root, args.config, args.dataset, args.out, args.include_real, args.skill, args.skill_dir, args.audience)
     if args.cmd == "run-evaluation-loop":
         return cmd_run_evaluation_loop(
             args.root,
@@ -128,6 +131,7 @@ def main(argv: list[str] | None = None) -> int:
             args.llm_command_json,
             args.max_steps,
             args.gap_hint,
+            args.audience,
         )
     if args.cmd == "run-llm-loop":
         return cmd_run_llm_loop(
@@ -141,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
             args.llm_command_json,
             args.max_steps,
             args.gap_hint,
+            args.audience,
         )
     if args.cmd == "check-real-gate":
         require_real_robot_gate(config)
@@ -153,6 +158,8 @@ def cmd_preflight(config: PipelineConfig, root: str = ".") -> int:
     report = run_preflight(config, root=root)
     print(f"Preflight checks: {report['status']}")
     print(f"- selected Isaac Lab task: {report['selected_isaac_lab_task']}")
+    print(f"- release profile: {report['required_physics']['release_profile']}")
+    print(f"- physics required: {report['required_physics']['physics_required']}")
     print(f"- ROS_DOMAIN_ID: {report['isaac_ros']['ros_domain_id']}")
     print(f"- RMW_IMPLEMENTATION: {report['isaac_ros']['rmw_implementation']}")
     print()
@@ -247,6 +254,7 @@ def cmd_run_harness(
     include_real: bool,
     only_skill: str | None,
     skill_dirs: list[str],
+    audience: str | None,
 ) -> int:
     scoreboard = run_harness(
         root=root,
@@ -256,6 +264,7 @@ def cmd_run_harness(
         include_real=include_real,
         only_skill=only_skill,
         skill_dirs=skill_dirs,
+        audience=audience,
     )
     print(json.dumps(scoreboard, indent=2, sort_keys=True))
     return 0 if scoreboard["status"] == "pass" else 1
@@ -291,6 +300,7 @@ def cmd_run_evaluation_loop(
     llm_command_json: str | None,
     max_steps: int | None,
     gap_hints: list[str],
+    audience: str | None,
 ) -> int:
     trace = run_evaluation_loop(
         root=root,
@@ -304,6 +314,7 @@ def cmd_run_evaluation_loop(
         llm_command=load_provider_command_json(llm_command_json),
         max_steps=max_steps,
         gap_hints=gap_hints,
+        audience=audience,
     )
     print(json.dumps(trace, indent=2, sort_keys=True))
     return 0 if trace["release_gate_decides"]["status"] == "promote_to_human_review" else 1
@@ -320,6 +331,7 @@ def cmd_run_llm_loop(
     llm_command_json: str | None,
     max_steps: int | None,
     gap_hints: list[str],
+    audience: str | None,
 ) -> int:
     summary = run_llm_orchestrated_loop(
         root=root,
@@ -332,6 +344,7 @@ def cmd_run_llm_loop(
         provider_command=load_provider_command_json(llm_command_json),
         max_steps=max_steps,
         gap_hints=gap_hints,
+        audience=audience,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0 if summary["status"] == "pass" else 1

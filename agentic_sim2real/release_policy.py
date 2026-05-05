@@ -5,7 +5,13 @@ from typing import Any
 from .config import PipelineConfig
 
 
-STRICT_RELEASE_PROFILES = {"release_candidate", "hardware_review", "hardware"}
+STRICT_RELEASE_PROFILES = {
+    "release_candidate",
+    "hardware_review",
+    "hardware",
+    "physics_required",
+    "production_upload",
+}
 
 
 def release_profile(config: PipelineConfig) -> str:

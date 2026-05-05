@@ -1,0 +1,19 @@
+{
+  "id": "regression_evaluation",
+  "name": "Regression Evaluation",
+  "owner_agent": "critic_agent",
+  "description": "Compare candidate settings against baseline metrics and optional true Isaac Lab rollout evidence before release-gate promotion.",
+  "implementation": "regression_evaluation",
+  "depends_on": ["agentic_tuning_plan"],
+  "inputs": ["agentic_tuning_plan", "baseline_metrics", "config.release"],
+  "outputs": ["regression_evaluation.json", "subchecks/*/result.json", "result.json"],
+  "validators": [
+    "candidate peak force must stay below the configured safety limit",
+    "candidate pose p95 error must stay below the configured pose gate",
+    "release-candidate profile must provide true Isaac Lab rollout evidence or an explicit waiver"
+  ],
+  "quality_gate": {"min_score": 0.7},
+  "human_required": false,
+  "release_blocking": true,
+  "real_robot": false
+}

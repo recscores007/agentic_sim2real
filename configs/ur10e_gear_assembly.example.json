@@ -65,14 +65,13 @@
       "rollouts": null
     },
     "skills_allowed": [
-      "real_data_quality_gate",
-      "sysid_step_response",
-      "newton_sysid",
-      "pace_sysid",
-      "domain_randomization_update",
-      "action_scale_sweep",
-      "sim_eval_regression",
-      "isaaclab_rollout_regression"
+      "project_preflight",
+      "real_data_evidence_gate",
+      "physics_sysid",
+      "agentic_tuning_plan",
+      "regression_evaluation",
+      "release_candidate_gate",
+      "real_robot_gate"
     ],
     "budget": {
       "gpu_hr": 20.0,
@@ -116,6 +115,9 @@
     "max_invalid_decisions": 3,
     "allow_retries": false,
     "budget_skill_calls": 24
+  },
+  "ui": {
+    "audience": "customer"
   },
   "sysid": {
     "sysid_backend_preference": ["newton", "pace", "local"],

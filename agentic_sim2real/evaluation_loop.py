@@ -7,7 +7,7 @@ from typing import Any
 
 from .artifacts import write_slide_contract_bundle
 from .autoresearch import build_plan
-from .config import load_config
+from .config import config_with_ui_audience, load_config
 from .dataset import load_records
 from .llm_orchestrator import run_llm_orchestrated_loop
 from .real_data import ensure_aligned_dataset
@@ -31,11 +31,12 @@ def run_evaluation_loop(
     llm_command: list[str] | None = None,
     max_steps: int | None = None,
     gap_hints: list[str] | None = None,
+    audience: str | None = None,
 ) -> dict[str, Any]:
     root_path = Path(root).resolve()
     out = Path(out_dir).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
-    config = load_config(config_path)
+    config = config_with_ui_audience(load_config(config_path), audience)
     resolved_dataset_path = ensure_aligned_dataset(dataset_path, root=root_path)
     records = load_records(resolved_dataset_path)
     gap = estimate_gap(records, config)
@@ -54,8 +55,10 @@ def run_evaluation_loop(
         provider_command=llm_command,
         max_steps=max_steps,
         gap_hints=gap_hints,
+        audience=config.ui.get("audience"),
     )
     scoreboard = orchestrator["scoreboard"]
+    (out / "scoreboard.json").write_text(json.dumps(scoreboard, indent=2, sort_keys=True) + "\n")
     measurements = evaluator_measures(scoreboard, threshold_policy, out)
     critique = critic_challenges(scoreboard, threshold_policy, config, out)
     decision = release_gate_decides(scoreboard, critique, config, out)
@@ -91,6 +94,7 @@ def run_evaluation_loop(
         out,
         run_status="complete",
         journal_path=out / "harness" / "llm_orchestrator" / "journal.jsonl",
+        audience=config.ui.get("audience"),
     )
     (out / "evaluation_trace.json").write_text(json.dumps(trace, indent=2, sort_keys=True) + "\n")
     (out / "evaluation_trace.md").write_text(write_trace_markdown(trace) + "\n")
@@ -124,6 +128,7 @@ def agent_proposes(plan: dict[str, Any], gap: dict[str, Any], out: Path) -> dict
 
 def evaluator_measures(scoreboard: dict[str, Any], threshold_policy: dict[str, Any], out: Path) -> dict[str, Any]:
     skills = scoreboard["skills"]
+    subchecks = scoreboard.get("subchecks", {})
     measurements = {
         "role": "Evaluator",
         "job": "Run deterministic skill validators, compute metrics, and write evidence.",
@@ -155,6 +160,7 @@ def critic_challenges(
     challenges = []
     observations = []
     skills = scoreboard["skills"]
+    expanded_skills = _skills_with_subchecks(skills)
     confidence_floor = float(threshold_policy["statistical_thresholds"]["min_skill_confidence_for_auto_promotion"])
 
     for skill_id, result in skills.items():
@@ -171,7 +177,7 @@ def critic_challenges(
         for warning in result.get("warnings", []):
             observations.append(f"{skill_id} warning: {warning}")
 
-    data_quality = skills.get("real_data_quality_gate", {})
+    data_quality = expanded_skills.get("real_data_quality_gate", skills.get("real_data_evidence_gate", {}))
     data_metrics = data_quality.get("metrics", {})
     success_coverage = float(data_metrics.get("success_label_coverage", 0.0) or 0.0)
     contact_coverage = float(data_metrics.get("contact_coverage", 0.0) or 0.0)
@@ -193,8 +199,8 @@ def critic_challenges(
     if joint_velocity_coverage < 0.5:
         observations.append("joint velocity coverage is sparse; delay/stiction conclusions are weaker")
 
-    newton = skills.get("newton_sysid", {})
-    pace = skills.get("pace_sysid", {})
+    newton = expanded_skills.get("newton_sysid", {})
+    pace = expanded_skills.get("pace_sysid", {})
     physics_passed = newton.get("status") == "pass" or pace.get("status") == "pass"
     if release_requires(config, "require_physics_sysid_for_human_review"):
         waiver = release_waiver(config, "allow_sysid_waiver", "sysid_waiver_reason")
@@ -203,20 +209,20 @@ def critic_challenges(
     elif not physics_passed:
         observations.append("no Newton/PACE physics SysID backend produced fitted parameters")
 
-    policy = skills.get("policy_artifact_audit", {})
+    policy = expanded_skills.get("policy_artifact_audit", skills.get("project_preflight", {}))
     if policy.get("metrics", {}).get("using_sample_artifacts"):
         if release_requires(config, "require_user_policy_artifacts_for_human_review"):
             challenges.append("policy artifact audit is still using sample fixtures")
         else:
             observations.append("policy artifact audit is using sample fixtures")
 
-    rollout = skills.get("isaaclab_rollout_regression", {})
+    rollout = expanded_skills.get("isaaclab_rollout_regression", {})
     if release_requires(config, "require_isaaclab_rollout_for_human_review"):
         waiver = release_waiver(config, "allow_isaaclab_rollout_waiver", "isaaclab_rollout_waiver_reason")
         if rollout.get("status") != "pass" and not waiver["allowed"]:
             challenges.append("true Isaac Lab rollout regression evidence is missing")
 
-    sim_eval = skills.get("sim_eval_regression", {})
+    sim_eval = expanded_skills.get("sim_eval_regression", skills.get("regression_evaluation", {}))
     success_delta = float(sim_eval.get("metrics", {}).get("success_delta", 0.0))
     if success_delta < float(threshold_policy["regression_thresholds"]["min_success_delta"]):
         challenges.append(
@@ -236,6 +242,19 @@ def critic_challenges(
     }
     critique["evidence_file"] = _write_json(out / "critic_challenges.json", critique)
     return critique
+
+
+def _skills_with_subchecks(skills: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    expanded = dict(skills)
+    for result in list(skills.values()):
+        metrics = result.get("metrics", {})
+        subchecks = metrics.get("subchecks", {}) if isinstance(metrics, dict) else {}
+        if not isinstance(subchecks, dict):
+            continue
+        for skill_id, payload in subchecks.items():
+            if isinstance(payload, dict):
+                expanded.setdefault(str(skill_id), dict(payload))
+    return expanded
 
 
 def release_gate_decides(scoreboard: dict[str, Any], critique: dict[str, Any], config: Any, out: Path) -> dict[str, Any]:

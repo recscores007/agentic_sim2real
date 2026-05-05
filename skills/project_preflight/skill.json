@@ -1,0 +1,20 @@
+{
+  "id": "project_preflight",
+  "name": "Project Preflight",
+  "owner_agent": "orchestrator_agent",
+  "description": "Validate the local environment, deployment middleware contract, Isaac Lab task contract, and policy artifact bundle before evidence analysis runs.",
+  "implementation": "project_preflight",
+  "depends_on": [],
+  "inputs": ["config", "policy_artifacts"],
+  "outputs": ["project_preflight.json", "subchecks/*/result.json", "result.json"],
+  "validators": [
+    "local runtime tools must be available",
+    "deployment middleware config must match the declared robot workflow",
+    "Isaac Lab task, gripper, observations, and action scale must match the configured contract",
+    "policy artifacts must include agent, environment, and checkpoint metadata"
+  ],
+  "quality_gate": {"min_score": 0.8},
+  "human_required": false,
+  "release_blocking": true,
+  "real_robot": false
+}

@@ -16,7 +16,7 @@ python3 -m agentic_sim2real.cli --config "${AGENTIC_SIM2REAL_CONFIG}" run-llm-lo
 
 echo
 echo "AutoResearch evidence:"
-echo "  ${OUT}/skills/autoresearch_planner/autoresearch_plan.json"
+echo "  ${OUT}/skills/agentic_tuning_plan/subchecks/autoresearch_planner/autoresearch_plan.json"
 echo "LLM journal:"
 echo "  ${OUT}/llm_orchestrator/journal.jsonl"
 echo "Release scoreboard:"

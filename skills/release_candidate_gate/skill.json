@@ -2,10 +2,10 @@
   "id": "release_candidate_gate",
   "name": "Release Candidate Gate",
   "owner_agent": "safety_agent",
-  "description": "Aggregate skill results and block promotion if any release-blocking skill failed.",
+  "description": "Aggregate consolidated skill results and block promotion if any release-blocking skill or required subcheck failed.",
   "implementation": "release_candidate_gate",
-  "depends_on": ["policy_artifact_audit", "isaaclab_rollout_regression"],
-  "inputs": ["skill_results"],
+  "depends_on": ["project_preflight", "regression_evaluation"],
+  "inputs": ["skill_results", "subcheck_results"],
   "outputs": ["release_gate_review.json", "result.json"],
   "validators": [
     "all required release-blocking skills must pass or have explicit waivers",

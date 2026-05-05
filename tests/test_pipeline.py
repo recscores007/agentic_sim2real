@@ -73,11 +73,14 @@ class PipelineTests(unittest.TestCase):
     def test_skill_manifests_validate(self) -> None:
         result = validate_all_manifests(ROOT)
         self.assertEqual(result["status"], "pass")
-        self.assertIn("autoresearch_planner", result["skills"])
-        self.assertIn("real_data_quality_gate", result["skills"])
-        self.assertIn("newton_sysid", result["skills"])
-        self.assertIn("pace_sysid", result["skills"])
-        self.assertIn("isaaclab_rollout_regression", result["skills"])
+        self.assertEqual(len(result["skills"]), 7)
+        self.assertIn("project_preflight", result["skills"])
+        self.assertIn("real_data_evidence_gate", result["skills"])
+        self.assertIn("physics_sysid", result["skills"])
+        self.assertIn("agentic_tuning_plan", result["skills"])
+        self.assertIn("regression_evaluation", result["skills"])
+        self.assertIn("release_candidate_gate", result["skills"])
+        self.assertIn("real_robot_gate", result["skills"])
 
     def test_harness_writes_scoreboard(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -88,10 +91,12 @@ class PipelineTests(unittest.TestCase):
                 out_dir=tmp,
             )
             self.assertEqual(scoreboard["status"], "pass")
-            self.assertIn("real_data_quality_gate", scoreboard["skills"])
-            self.assertEqual(scoreboard["skills"]["newton_sysid"]["status"], "evidence_missing")
-            self.assertEqual(scoreboard["skills"]["pace_sysid"]["status"], "evidence_missing")
-            self.assertEqual(scoreboard["skills"]["isaaclab_rollout_regression"]["status"], "not_applicable")
+            self.assertEqual(len(scoreboard["skills"]), 7)
+            self.assertIn("real_data_evidence_gate", scoreboard["skills"])
+            self.assertIn("newton_sysid", scoreboard["subchecks"])
+            self.assertEqual(scoreboard["subchecks"]["newton_sysid"]["status"], "evidence_missing")
+            self.assertEqual(scoreboard["subchecks"]["pace_sysid"]["status"], "evidence_missing")
+            self.assertEqual(scoreboard["subchecks"]["isaaclab_rollout_regression"]["status"], "not_applicable")
             self.assertEqual(scoreboard["skills"]["real_robot_gate"]["status"], "not_approved")
             self.assertEqual(scoreboard["human_review_readiness"], "smoke_review_only")
             self.assertFalse(scoreboard["release_candidate_ready"])
@@ -124,6 +129,7 @@ class PipelineTests(unittest.TestCase):
                 self.assertTrue(Path(artifacts[key]).exists())
             ui_state = json.loads(Path(artifacts["state"]).read_text())
             self.assertEqual(ui_state["schema_version"], "agentic_sim2real.pipeline_ui.v1")
+            self.assertEqual(ui_state["audience"], "customer")
             self.assertEqual(ui_state["mode"], "characterization")
             self.assertIn("workflow", ui_state)
             self.assertIn("run_record", ui_state)
@@ -156,6 +162,47 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(command_report["status"], "pass")
         self.assertTrue(command_report["sysid_backends"]["pace"]["available"])
         self.assertTrue(command_report["sysid_backends"]["pace"]["command_configured"])
+
+    def test_production_upload_preflight_fails_without_physics_backend(self) -> None:
+        cfg = load_config(ROOT / "configs" / "ur10e_gear_assembly.production_upload.example.json")
+        report = run_preflight(cfg, root=ROOT)
+        self.assertEqual(report["status"], "fail")
+        self.assertTrue(report["required_physics"]["physics_required"])
+        joined = "\n".join(report["failures"])
+        self.assertIn("profile requires Newton or PACE SysID", joined)
+
+    def test_required_physics_rejects_stub_backend_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config = json.loads((ROOT / "configs" / "ur10e_gear_assembly.example.json").read_text())
+            config["release"]["profile"] = "physics_required"
+            config["sysid"]["pace_enabled"] = True
+            config["sysid"]["pace_command"] = ["python3", "pace_sysid_stub.py"]
+            config_path = tmp_path / "config.json"
+            config_path.write_text(json.dumps(config) + "\n")
+
+            report = run_preflight(load_config(config_path), root=ROOT)
+            self.assertEqual(report["status"], "fail")
+            self.assertIn("required PACE SysID cannot use a stub command", "\n".join(report["failures"]))
+
+    def test_physics_required_profile_fails_closed_in_harness(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config = json.loads((ROOT / "configs" / "ur10e_gear_assembly.example.json").read_text())
+            config["release"]["profile"] = "physics_required"
+            config_path = tmp_path / "config.json"
+            config_path.write_text(json.dumps(config) + "\n")
+
+            scoreboard = run_harness(
+                root=ROOT,
+                config_path=config_path,
+                dataset_path=ROOT / "sample_data" / "real_log_demo.jsonl",
+                out_dir=tmp_path / "out",
+            )
+            self.assertEqual(scoreboard["status"], "fail")
+            physics = scoreboard["skills"]["physics_sysid"]
+            self.assertEqual(physics["status"], "fail")
+            self.assertIn("physics profile requires Newton or PACE", "\n".join(physics["blocking_failures"]))
 
     def test_custom_command_skill_overrides_builtin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -266,12 +313,13 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(summary["provider"], "scripted")
             self.assertIn("release_candidate_gate", summary["completed_skill_ids"])
             self.assertIn("real_robot_gate", summary["completed_skill_ids"])
-            self.assertIn("isaaclab_rollout_regression", summary["completed_skill_ids"])
+            self.assertIn("regression_evaluation", summary["completed_skill_ids"])
+            self.assertIn("isaaclab_rollout_regression", summary["scoreboard"]["subchecks"])
             self.assertEqual(summary["scoreboard"]["skills"]["real_robot_gate"]["status"], "not_approved")
             journal = Path(summary["journal"])
             self.assertTrue(journal.exists())
             lines = [json.loads(line) for line in journal.read_text().splitlines()]
-            self.assertGreaterEqual(len(lines), 15)
+            self.assertGreaterEqual(len(lines), 7)
             self.assertEqual(lines[0]["status"], "skill_completed")
             self.assertIn("scorecard", lines[0])
             self.assertTrue(Path(lines[0]["scorecard"]["scorecard"]).exists())
@@ -280,12 +328,13 @@ class PipelineTests(unittest.TestCase):
                 self.assertTrue(Path(summary["ui_artifacts"][key]).exists())
             state = json.loads(Path(summary["ui_artifacts"]["state"]).read_text())
             self.assertEqual(state["schema_version"], "agentic_sim2real.pipeline_ui.v1")
+            self.assertEqual(state["audience"], "customer")
             self.assertEqual(state["run"]["status"], "complete")
             self.assertFalse(state["run"]["safe_to_autorun_robot"])
             self.assertFalse(state["scoreboard"]["safe_to_autorun_robot"])
             self.assertIn("pipeline_input", state)
             self.assertIn("rollout_summary", state)
-            self.assertGreaterEqual(len(state["journal"]), 15)
+            self.assertGreaterEqual(len(state["journal"]), 7)
             self.assertIn("characterization", state)
             self.assertIn("policy_release", state)
             self.assertIn("nondeterministic_coverage", state["scoreboard"])
@@ -297,9 +346,7 @@ class PipelineTests(unittest.TestCase):
                 row["skill_id"]
                 for row in state["scoreboard"]["agentic_proposal_skills"]
             }
-            self.assertIn("autoresearch_planner", proposal_ids)
-            self.assertIn("domain_randomization_update", proposal_ids)
-            self.assertIn("action_scale_sweep", proposal_ids)
+            self.assertIn("agentic_tuning_plan", proposal_ids)
             for row in state["scoreboard"]["agentic_proposal_skills"]:
                 self.assertIn("pipeline_action", row)
                 self.assertIn("user_action", row)
@@ -316,7 +363,7 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("Human", real_robot_row["user_action"])
             newton_row = next(
                 row
-                for row in state["scoreboard"]["deterministic_validation_skills"]
+                for row in state["scoreboard"]["developer_subchecks"]
                 if row["skill_id"] == "newton_sysid"
             )
             self.assertIn("Newton SysID did not run", newton_row["quality_rationale"])
@@ -339,11 +386,25 @@ class PipelineTests(unittest.TestCase):
             )
             self.assertEqual(summary["gap_hints"][0]["normalized"], "contact")
             completed = summary["completed_skill_ids"]
-            self.assertLess(completed.index("action_scale_sweep"), completed.index("newton_sysid"))
+            self.assertLess(completed.index("agentic_tuning_plan"), completed.index("regression_evaluation"))
             first_context = Path(tmp) / "llm_orchestrator" / "steps" / "step_001_context.json"
             context = json.loads(first_context.read_text())
             self.assertEqual(context["task"]["user_gap_hints"][0]["normalized"], "contact")
-            self.assertIn("action_scale_sweep", context["task"]["gap_hint_priority_skill_ids"])
+            self.assertIn("agentic_tuning_plan", context["task"]["gap_hint_priority_skill_ids"])
+
+    def test_developer_audience_is_recorded_in_ui_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = run_llm_orchestrated_loop(
+                root=ROOT,
+                config_path=ROOT / "configs" / "ur10e_gear_assembly.example.json",
+                dataset_path=ROOT / "sample_data" / "real_log_demo.jsonl",
+                out_dir=tmp,
+                audience="developer",
+            )
+            state = json.loads(Path(summary["ui_artifacts"]["state"]).read_text())
+            self.assertEqual(state["audience"], "developer")
+            pipeline_input = json.loads(Path(summary["scoreboard"]["artifacts"]["pipeline_input"]).read_text())
+            self.assertEqual(pipeline_input["ui"]["audience"], "developer")
 
     def test_llm_orchestrator_rejects_invalid_release_gate_call(self) -> None:
         class BadReleaseThenScriptedProvider(LLMProvider):
@@ -551,7 +612,7 @@ class PipelineTests(unittest.TestCase):
                 out_dir=tmp_path / "out",
                 only_skill="newton_sysid",
             )
-            result = scoreboard["skills"]["newton_sysid"]
+            result = scoreboard["skills"]["physics_sysid"]["metrics"]["subchecks"]["newton_sysid"]
             self.assertEqual(result["status"], "pass")
             self.assertTrue(result["metrics"]["newton_fit_used"])
 
@@ -591,7 +652,7 @@ class PipelineTests(unittest.TestCase):
                 out_dir=tmp_path / "out",
                 only_skill="pace_sysid",
             )
-            result = scoreboard["skills"]["pace_sysid"]
+            result = scoreboard["skills"]["physics_sysid"]["metrics"]["subchecks"]["pace_sysid"]
             self.assertEqual(result["status"], "pass")
             self.assertTrue(result["metrics"]["pace_fit_used"])
 

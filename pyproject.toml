@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agentic-sim2real"
 version = "0.1.0"
-description = "Portable agentic sim2real framework with embodiment-scoped robot examples."
+description = "Validates robot logs, proposes bounded sim updates, and publishes auditable release-readiness hubs."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Codex" }]

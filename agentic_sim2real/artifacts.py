@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .autoresearch import build_plan
-from .config import PipelineConfig, choose_task
+from .config import PipelineConfig, choose_task, normalize_ui_audience
 from .data_quality import evaluate_data_readiness
 from .dataset import Record, load_records
 from .metrics import summarize_records
@@ -475,6 +475,9 @@ def build_pipeline_input(
             "sha256": _dataset_hash(dataset_path),
         },
         "skills_allowed": skill_ids or [str(item) for item in task_cfg.get("skills_allowed", [])],
+        "ui": {
+            "audience": normalize_ui_audience(config.ui.get("audience")),
+        },
         "budget": dict(task_cfg.get("budget", {})),
         "kill_criteria": {
             **dict(task_cfg.get("kill_criteria", {})),
@@ -670,6 +673,7 @@ def render_pipeline_input_markdown(payload: dict[str, Any]) -> str:
             "",
             f"- Task: {payload['task']}",
             f"- Mode: {payload.get('mode', 'characterization')}",
+            f"- UI audience: {payload.get('ui', {}).get('audience', 'customer')}",
             "- Characterization goal: tune sim parameters from trajectory/camera/contact evidence",
             f"- Policy release goal: real_success >= {payload['goal']['real_success']}, release_gap_score <= {payload['goal']['release_gap_target']}",
             f"- Scenarios: {', '.join(payload['scenarios'])}",
@@ -1010,6 +1014,13 @@ def _result_dicts(results: dict[str, Any]) -> dict[str, dict[str, Any]]:
             normalized[skill_id] = dict(result)
         else:
             normalized[skill_id] = {"status": "unknown", "value": str(result)}
+    for result in list(normalized.values()):
+        subchecks = result.get("metrics", {}).get("subchecks", {}) if isinstance(result.get("metrics"), dict) else {}
+        if not isinstance(subchecks, dict):
+            continue
+        for skill_id, payload in subchecks.items():
+            if isinstance(payload, dict):
+                normalized.setdefault(str(skill_id), dict(payload))
     return normalized
 
 
