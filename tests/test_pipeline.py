@@ -173,6 +173,19 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(len(records[0].action), 6)
             self.assertGreater(len(records[0].shaft_pose_estimate), 0)
 
+    def test_prepare_generic_object_pose_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "records.jsonl"
+            session = ROOT / "embodiments" / "manipulator" / "generic_manipulator" / "real_data" / "example_session"
+            summary = prepare_real_session(session, out_path=out)
+            self.assertEqual(summary["records"], 12)
+            self.assertIn("object_pose.csv", summary["pose_file"])
+            records = load_records(out)
+            self.assertEqual(len(records), 12)
+            self.assertEqual(len(records[0].action), 6)
+            self.assertGreater(len(records[0].shaft_pose_estimate), 0)
+            self.assertIn("object_pose_estimate", records[0].raw or {})
+
 
 if __name__ == "__main__":
     unittest.main()

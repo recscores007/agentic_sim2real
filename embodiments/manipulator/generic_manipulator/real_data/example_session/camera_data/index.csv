@@ -1,0 +1,13 @@
+episode_index,timestamp,camera_name,color_image,depth_image
+0,0.000,camera_1,camera_data/color/episode_000_t000000.png,camera_data/depth/episode_000_t000000.png
+0,0.033,camera_1,camera_data/color/episode_000_t000033.png,camera_data/depth/episode_000_t000033.png
+0,0.066,camera_1,camera_data/color/episode_000_t000066.png,camera_data/depth/episode_000_t000066.png
+0,0.099,camera_1,camera_data/color/episode_000_t000099.png,camera_data/depth/episode_000_t000099.png
+1,0.000,camera_1,camera_data/color/episode_001_t000000.png,camera_data/depth/episode_001_t000000.png
+1,0.033,camera_1,camera_data/color/episode_001_t000033.png,camera_data/depth/episode_001_t000033.png
+1,0.066,camera_1,camera_data/color/episode_001_t000066.png,camera_data/depth/episode_001_t000066.png
+1,0.099,camera_1,camera_data/color/episode_001_t000099.png,camera_data/depth/episode_001_t000099.png
+2,0.000,camera_1,camera_data/color/episode_002_t000000.png,camera_data/depth/episode_002_t000000.png
+2,0.033,camera_1,camera_data/color/episode_002_t000033.png,camera_data/depth/episode_002_t000033.png
+2,0.066,camera_1,camera_data/color/episode_002_t000066.png,camera_data/depth/episode_002_t000066.png
+2,0.099,camera_1,camera_data/color/episode_002_t000099.png,camera_data/depth/episode_002_t000099.png

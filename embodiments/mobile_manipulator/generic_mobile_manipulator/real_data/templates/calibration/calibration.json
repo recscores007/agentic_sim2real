@@ -1,0 +1,13 @@
+{
+  "robot_base_frame": "base",
+  "task_frame": "task_object",
+  "camera_frame": "camera_0",
+  "camera_intrinsics": {
+    "fx": 615.0,
+    "fy": 615.0,
+    "cx": 320.0,
+    "cy": 240.0
+  },
+  "hand_eye_transform_source": "replace_with_calibration_file",
+  "validation_pose_error_m": 0.005
+}

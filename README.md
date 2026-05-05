@@ -410,17 +410,43 @@ Thresholds live in `harness/threshold_policy.json`:
 Agents may propose new parameters, but the evaluator and release gate own
 pass/fail.
 
-## Real Data Folder
+## Embodiment Folders
 
-Put real robot data inside the relevant embodiment. For the UR10e gear assembly
-manipulator example, use:
+Each embodiment uses the same portable scaffold:
 
 ```text
-embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>/
+embodiments/<embodiment_type>/<embodiment_name>/
+  configs/
+  artifacts/
+  evaluation/
+  real_data/
+    templates/
+    example_session/
 ```
 
+Current scaffolded embodiment classes:
+
+- `embodiments/manipulator/generic_manipulator`
+- `embodiments/manipulator/ur10e_gear_assembly`
+- `embodiments/humanoid/generic_humanoid`
+- `embodiments/mobile_manipulator/generic_mobile_manipulator`
+
+Use the generic folders as copyable starting points. Keep reusable agent skills
+at the repo root; put robot-specific data, config references, artifacts, and
+threshold notes inside the embodiment.
+
+## Real Data Folder
+
+Put real robot data inside the relevant embodiment:
+
 ```text
-embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>/
+embodiments/<embodiment_type>/<embodiment_name>/real_data/<session_name>/
+```
+
+Portable session layout:
+
+```text
+embodiments/<embodiment_type>/<embodiment_name>/real_data/<session_name>/
   camera_data/
     index.csv
     color/
@@ -428,7 +454,7 @@ embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>/
   joint_data/
     joint_states.csv
   pose_data/
-    shaft_pose.csv
+    object_pose.csv
   contact_data/
     contact.csv
   episode_labels/
@@ -437,6 +463,12 @@ embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>/
     calibration.json
   aligned/
     records.jsonl
+```
+
+For the UR10e gear assembly manipulator example, use:
+
+```text
+embodiments/manipulator/ur10e_gear_assembly/real_data/<session_name>/
 ```
 
 Use the template:
@@ -449,11 +481,16 @@ cp -R embodiments/manipulator/ur10e_gear_assembly/real_data/templates \
 Fill in:
 
 - `joint_data/joint_states.csv`: policy actions, joint positions, joint velocities, optional end-effector pose
-- `pose_data/shaft_pose.csv`: FoundationPose/RealSense shaft pose estimate and reference pose if available
+- `pose_data/object_pose.csv`: perception object/target pose estimate and reference pose if available
 - `camera_data/index.csv`: color/depth image paths or frame provenance
 - `contact_data/contact.csv`: force or force-proxy samples
 - `episode_labels/labels.csv`: success, failure mode, notes
 - `calibration/calibration.json`: robot calibration, camera frames, hand-eye metadata
+
+The UR tutorial still uses `pose_data/shaft_pose.csv` because the task object is
+the gear shaft. The loader accepts both `object_pose.csv` and `shaft_pose.csv`,
+so the same structure works for generic manipulators, humanoids, and mobile
+manipulators.
 
 Convert raw subfolders into the pipeline format:
 
@@ -483,8 +520,8 @@ is passed as `--dataset`.
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/recscores007/so101.git
-cd so101
+git clone https://github.com/recscores007/agentic_sim2real.git
+cd agentic_sim2real
 python3 -m pip install -e .
 cp configs/ur10e_gear_assembly.example.json configs/ur10e_gear_assembly.local.json
 export UR_GEAR_CONFIG=$PWD/configs/ur10e_gear_assembly.local.json

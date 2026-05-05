@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 
+POSE_FILENAMES = ("object_pose.csv", "shaft_pose.csv")
+
 JOINT_NAMES = [
     "shoulder_pan_joint",
     "shoulder_lift_joint",
@@ -29,7 +31,7 @@ def prepare_real_session(
     out.parent.mkdir(parents=True, exist_ok=True)
 
     joints = _read_csv_required(session / "joint_data" / "joint_states.csv")
-    poses = _read_csv_required(session / "pose_data" / "shaft_pose.csv")
+    poses, pose_path = _read_csv_required_any(session / "pose_data", POSE_FILENAMES)
     contacts = _read_csv_optional(session / "contact_data" / "contact.csv")
     cameras = _read_csv_optional(session / "camera_data" / "index.csv")
     labels = _labels_by_episode(_read_csv_optional(session / "episode_labels" / "labels.csv"))
@@ -50,12 +52,12 @@ def prepare_real_session(
 
         if pose_row is None:
             missing_pose_matches += 1
-            warnings.append(f"episode {episode} t={timestamp}: no shaft pose match within {tolerance_s}s")
-            shaft_estimate: list[float] = []
-            shaft_reference: list[float] = []
+            warnings.append(f"episode {episode} t={timestamp}: no object pose match within {tolerance_s}s")
+            object_estimate: list[float] = []
+            object_reference: list[float] = []
         else:
-            shaft_estimate = _pose_from_prefix(pose_row, "estimate")
-            shaft_reference = _pose_from_prefix(pose_row, "reference", optional=True)
+            object_estimate = _pose_from_prefix(pose_row, "estimate")
+            object_reference = _pose_from_prefix(pose_row, "reference", optional=True)
 
         if contact_row is None:
             missing_contact_matches += 1
@@ -76,12 +78,14 @@ def prepare_real_session(
         record = {
             "episode_index": episode,
             "timestamp": timestamp,
-            "action": _vector_from_prefix(joint_row, "action", 6),
-            "joint_state": _vector_from_prefix(joint_row, "joint", 6),
-            "joint_velocity": _vector_from_prefix(joint_row, "joint_vel", 6, optional=True),
+            "action": _vector_from_prefix(joint_row, "action"),
+            "joint_state": _vector_from_prefix(joint_row, "joint"),
+            "joint_velocity": _vector_from_prefix(joint_row, "joint_vel", optional=True),
             "ee_pose": _pose_from_prefix(joint_row, "ee", optional=True),
-            "shaft_pose_estimate": shaft_estimate,
-            "shaft_pose_reference": shaft_reference,
+            "object_pose_estimate": object_estimate,
+            "object_pose_reference": object_reference,
+            "shaft_pose_estimate": object_estimate,
+            "shaft_pose_reference": object_reference,
             "contact_force": contact_force,
             "success": label.get("success"),
             "failure_mode": _clean_failure_mode(label.get("failure_mode")),
@@ -105,6 +109,7 @@ def prepare_real_session(
         "missing_camera_matches": missing_camera_matches,
         "warnings": warnings,
         "required_pipeline_file": _display_path(out),
+        "pose_file": _display_path(pose_path),
     }
     summary_path = out.parent / "prepare_summary.json"
     summary["summary_path"] = _display_path(summary_path)
@@ -116,6 +121,15 @@ def _read_csv_required(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         raise FileNotFoundError(f"Required real-data file missing: {path}")
     return _read_csv(path)
+
+
+def _read_csv_required_any(parent: Path, filenames: tuple[str, ...]) -> tuple[list[dict[str, str]], Path]:
+    for filename in filenames:
+        path = parent / filename
+        if path.exists():
+            return _read_csv(path), path
+    options = ", ".join(str(parent / filename) for filename in filenames)
+    raise FileNotFoundError(f"Required real-data file missing. Expected one of: {options}")
 
 
 def _read_csv_optional(path: Path) -> list[dict[str, str]]:
@@ -153,9 +167,16 @@ def _nearest_row(rows: list[dict[str, str]], episode: int, timestamp: float, tol
     return best_row
 
 
-def _vector_from_prefix(row: dict[str, str], prefix: str, count: int, optional: bool = False) -> list[float]:
+def _vector_from_prefix(row: dict[str, str], prefix: str, optional: bool = False) -> list[float]:
     values = []
-    for idx in range(count):
+    indices = _prefix_indices(row, prefix)
+    if not indices:
+        if optional:
+            return []
+        raise ValueError(f"Missing required columns {prefix}_0 ... {prefix}_N")
+    if indices != list(range(indices[-1] + 1)):
+        raise ValueError(f"Columns for {prefix} must be contiguous from {prefix}_0")
+    for idx in indices:
         value = row.get(f"{prefix}_{idx}")
         if value in (None, ""):
             if optional:
@@ -163,6 +184,18 @@ def _vector_from_prefix(row: dict[str, str], prefix: str, count: int, optional: 
             raise ValueError(f"Missing required column {prefix}_{idx}")
         values.append(float(value))
     return values
+
+
+def _prefix_indices(row: dict[str, str], prefix: str) -> list[int]:
+    indices = []
+    marker = f"{prefix}_"
+    for key in row:
+        if not key.startswith(marker):
+            continue
+        suffix = key[len(marker) :]
+        if suffix.isdigit():
+            indices.append(int(suffix))
+    return sorted(indices)
 
 
 def _pose_from_prefix(row: dict[str, str], prefix: str, optional: bool = False) -> list[float]:

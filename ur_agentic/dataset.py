@@ -98,6 +98,9 @@ def _normalize(row: dict[str, Any]) -> Record:
             "gear_shaft_pose_estimate",
             "gear_shaft_pose",
             "shaft_pose",
+            "object_pose_estimate",
+            "object_pose",
+            "target_pose_estimate",
             default=[],
         )
     )
@@ -108,6 +111,9 @@ def _normalize(row: dict[str, Any]) -> Record:
             "shaft_pose_ground_truth",
             "shaft_pose_measured",
             "gear_shaft_pose_reference",
+            "object_pose_reference",
+            "object_pose_ground_truth",
+            "target_pose_reference",
             default=[],
         )
     )
