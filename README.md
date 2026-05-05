@@ -15,6 +15,49 @@ but the validation harness decides whether they are good enough to release.
 
 Real robot motion is never automatic. It remains human-gated.
 
+## Skills And Evaluator At A Glance
+
+This repo is organized around atomic skills. An atomic skill is one small,
+testable capability in the sim2real pipeline: environment preflight, policy
+artifact audit, pose repeatability, SysID, domain randomization update, action
+scale sweep, regression testing, release gating, or real-robot approval.
+
+Each skill is treated like a releasable unit:
+
+- it has a `skills/<skill_id>/skill.json` manifest
+- it declares inputs, outputs, dependencies, owner agent, and pass/fail gates
+- it writes evidence files under `outputs/.../skills/<skill_id>/`
+- it returns `status`, `quality_score`, `confidence`, warnings, and blocking failures
+- it can be validated alone or as part of the full release harness
+
+The AutoResearch agent is the proposal engine. It reads real logs and skill
+metrics, then proposes ranked experiments and candidate parameter updates for
+SysID, domain randomization, action scale, perception noise, and reset
+generalization. It is intentionally bounded: AutoResearch can propose changes
+and promote candidates to human review, but it cannot pass its own work or run
+the robot.
+
+The evaluator is the measurement and release system:
+
+| Component | What It Does | Can It Change Parameters? | Can It Approve Hardware? |
+| --- | --- | --- | --- |
+| Atomic skills | Run one bounded validation task and write evidence | No | No |
+| AutoResearch agent | Propose experiments and candidate parameter updates | Proposes only | No |
+| Evaluator harness | Measures every skill, scores quality, records evidence | No | No |
+| Critic | Challenges weak evidence, warnings, regressions, and low confidence | No | No |
+| Release gate | Blocks or promotes candidate to human review | No | No |
+| Human hardware gate | Approves supervised real-robot execution | Yes, by explicit approval | Yes |
+
+The full evaluation architecture is:
+
+```text
+Agent proposes -> Evaluator measures -> Critic challenges -> Release gate decides -> Human approves hardware
+```
+
+That means the repo is not just "agent runs scripts." It is an agentic
+sim2real system with explicit skill contracts, self-improvement proposals,
+deterministic validation, critic review, and a hard human gate before hardware.
+
 ## What This Targets
 
 - UR10e arm
@@ -84,6 +127,10 @@ harness/threshold_policy.json   Safety/spec/statistical/regression thresholds
 ```
 
 ## Atomic Skills
+
+Atomic skills are the smallest validated building blocks in the pipeline. The
+agent can run them repeatedly, compare evidence, and improve proposals, but the
+release gate decides whether the whole chain is good enough for human review.
 
 | Skill | Agent | Purpose | Release Blocking |
 | --- | --- | --- | --- |
@@ -156,6 +203,15 @@ Critic challenges.
 Release gate decides.
 Human approves hardware.
 ```
+
+This is the core evaluator feature. It separates proposing from measuring and
+approval:
+
+- the agent creates a candidate
+- the evaluator measures the candidate against thresholds
+- the critic looks for reasons the evidence is weak
+- the release gate applies pass/fail policy
+- the human decides whether a supervised real-robot run is allowed
 
 Run it:
 
