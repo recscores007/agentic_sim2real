@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 from .artifacts import write_slide_contract_bundle
 from .autoresearch import build_plan
-from .config import PipelineConfig, choose_task, load_config, nominal_action_scale
+from .config import PipelineConfig, choose_task, config_with_ui_audience, load_config, nominal_action_scale
 from .data_quality import evaluate_real_data_quality
 from .dataset import load_records
 from .newton_bridge import run_newton_bridge
@@ -38,6 +38,40 @@ REQUIRED_MANIFEST_FIELDS = {
     "human_required",
     "release_blocking",
     "real_robot",
+}
+
+CONSOLIDATED_SKILL_ALIASES = {
+    "env_preflight": "project_preflight",
+    "isaaclab_task_check": "project_preflight",
+    "policy_artifact_audit": "project_preflight",
+    "ros_preflight": "project_preflight",
+    "real_data_quality_gate": "real_data_evidence_gate",
+    "pose_repeatability": "real_data_evidence_gate",
+    "sysid_step_response": "physics_sysid",
+    "newton_sysid": "physics_sysid",
+    "pace_sysid": "physics_sysid",
+    "domain_randomization_update": "agentic_tuning_plan",
+    "action_scale_sweep": "agentic_tuning_plan",
+    "autoresearch_planner": "agentic_tuning_plan",
+    "sim_eval_regression": "regression_evaluation",
+    "isaaclab_rollout_regression": "regression_evaluation",
+}
+
+SUBCHECK_MIN_SCORES = {
+    "env_preflight": 0.7,
+    "isaaclab_task_check": 0.9,
+    "policy_artifact_audit": 0.7,
+    "ros_preflight": 0.8,
+    "real_data_quality_gate": 0.7,
+    "pose_repeatability": 0.7,
+    "sysid_step_response": 0.6,
+    "newton_sysid": 0.6,
+    "pace_sysid": 0.6,
+    "domain_randomization_update": 0.8,
+    "action_scale_sweep": 0.7,
+    "autoresearch_planner": 0.8,
+    "sim_eval_regression": 0.7,
+    "isaaclab_rollout_regression": 0.7,
 }
 
 
@@ -197,6 +231,7 @@ def run_harness(
     include_real: bool = False,
     only_skill: str | None = None,
     skill_dirs: list[str | Path] | None = None,
+    audience: str | None = None,
 ) -> dict[str, Any]:
     ctx, manifests = prepare_harness(
         root=root,
@@ -205,7 +240,10 @@ def run_harness(
         out_dir=out_dir,
         include_real=include_real,
         skill_dirs=skill_dirs,
+        audience=audience,
     )
+    if only_skill and only_skill not in manifests and only_skill in CONSOLIDATED_SKILL_ALIASES:
+        only_skill = CONSOLIDATED_SKILL_ALIASES[only_skill]
     ordered = ordered_skill_ids(manifests)
     if only_skill:
         ordered = [skill_id for skill_id in ordered if skill_id == only_skill]
@@ -227,6 +265,7 @@ def prepare_harness(
     out_dir: str | Path,
     include_real: bool = False,
     skill_dirs: list[str | Path] | None = None,
+    audience: str | None = None,
 ) -> tuple[HarnessContext, dict[str, SkillManifest]]:
     root_path = Path(root).resolve()
     resolved_config_path = Path(config_path).expanduser().resolve()
@@ -236,7 +275,7 @@ def prepare_harness(
     ctx = HarnessContext(
         root=root_path,
         config_path=resolved_config_path,
-        config=load_config(resolved_config_path),
+        config=config_with_ui_audience(load_config(resolved_config_path), audience),
         dataset=resolved_dataset_path,
         out_dir=out,
         include_real=include_real,
@@ -315,7 +354,7 @@ def write_harness_artifacts(
         config_path=ctx.config_path,
         skill_ids=sorted(manifests),
     )
-    artifact_paths.update(write_pipeline_ui(ctx.out_dir, run_status="complete"))
+    artifact_paths.update(write_pipeline_ui(ctx.out_dir, run_status="complete", audience=ctx.config.ui.get("audience")))
     scoreboard["artifacts"] = artifact_paths
     (ctx.out_dir / "scoreboard.json").write_text(json.dumps(scoreboard, indent=2, sort_keys=True) + "\n")
     return scoreboard
@@ -553,6 +592,15 @@ def _scoreboard(
     )
     readiness = "ready" if ready_for_human_review and strict_profile else "smoke_review_only" if ready_for_human_review else "not_ready"
     quality = sum(scores) / len(scores) if scores else 0.0
+    subchecks = {
+        subcheck_id: payload
+        for result in results.values()
+        for subcheck_id, payload in (
+            result.metrics.get("subchecks", {}).items()
+            if isinstance(result.metrics, dict) and isinstance(result.metrics.get("subchecks"), dict)
+            else []
+        )
+    }
     return {
         "status": "pass" if not blocking_failures else "fail",
         "release_profile": profile,
@@ -566,6 +614,7 @@ def _scoreboard(
         "status_counts": status_counts,
         "quality_score": round(quality, 3),
         "blocking_failures": blocking_failures,
+        "subchecks": subchecks,
         "skills": {skill_id: result.to_dict() for skill_id, result in results.items()},
     }
 
@@ -861,21 +910,24 @@ def _impl_newton_sysid(
     input_path.write_text(json.dumps(input_payload, indent=2, sort_keys=True) + "\n")
 
     if not enabled:
+        status = "fail" if required else "evidence_missing"
+        message = "IsaacLab-Newton is required but is not enabled or configured." if required else "IsaacLab-Newton is not enabled; local log-based SysID remains the active fallback."
         evidence = _write_json(
             skill_out / "newton_sysid.json",
             {
-                "status": "evidence_missing",
-                "reason": "IsaacLab-Newton is not enabled; local log-based SysID remains the active fallback.",
+                "status": status,
+                "reason": message,
                 "fallback_skill": "sysid_step_response",
                 "input_file": str(input_path),
             },
         )
         return SkillResult(
             skill_id=manifest.skill_id,
-            status="evidence_missing",
+            status=status,
             quality_score=0.0,
             confidence=1.0,
-            warnings=["Newton SysID skipped; set sysid.newton_enabled plus sysid.newton_root or sysid.newton_command to enable it"],
+            blocking_failures=[message] if required else [],
+            warnings=[] if required else ["Newton SysID skipped; set sysid.newton_enabled plus sysid.newton_root or sysid.newton_command to enable it"],
             evidence_files=[evidence],
             metrics={"newton_enabled": False, "fallback_skill": "sysid_step_response"},
         )
@@ -1072,17 +1124,19 @@ def _impl_pace_sysid(
     input_path.write_text(json.dumps(input_payload, indent=2, sort_keys=True) + "\n")
 
     if not enabled:
-        reason = "PACE backup SysID is not enabled; local log-based SysID remains the fallback when Newton is unavailable."
+        status = "fail" if required else "evidence_missing"
+        reason = "PACE backup SysID is required but is not enabled or configured." if required else "PACE backup SysID is not enabled; local log-based SysID remains the fallback when Newton is unavailable."
         evidence = _write_json(
             skill_out / "pace_sysid.json",
-            {"status": "evidence_missing", "reason": reason, "fallback_skill": "sysid_step_response", "input_file": str(input_path)},
+            {"status": status, "reason": reason, "fallback_skill": "sysid_step_response", "input_file": str(input_path)},
         )
         return SkillResult(
             skill_id=manifest.skill_id,
-            status="evidence_missing",
+            status=status,
             quality_score=0.0,
             confidence=1.0,
-            warnings=["PACE backup skipped; set sysid.pace_enabled plus sysid.pace_root or sysid.pace_command to enable it"],
+            blocking_failures=[reason] if required else [],
+            warnings=[] if required else ["PACE backup skipped; set sysid.pace_enabled plus sysid.pace_root or sysid.pace_command to enable it"],
             evidence_files=[evidence],
             metrics={"pace_enabled": False, "fallback_skill": "sysid_step_response"},
         )
@@ -1392,6 +1446,7 @@ def _impl_release_candidate_gate(
     skill_out: Path,
     previous: dict[str, SkillResult],
 ) -> SkillResult:
+    flat_previous = _flatten_previous_results(previous)
     failures = []
     requirement_checks = {
         "release_profile": release_profile(ctx.config),
@@ -1407,8 +1462,8 @@ def _impl_release_candidate_gate(
             failures.append(f"{skill_id} failed: {result.blocking_failures}")
 
     if release_requires(ctx.config, "require_physics_sysid_for_human_review"):
-        newton = previous.get("newton_sysid")
-        pace = previous.get("pace_sysid")
+        newton = flat_previous.get("newton_sysid")
+        pace = flat_previous.get("pace_sysid")
         physics_passed = bool((newton and newton.status == "pass") or (pace and pace.status == "pass"))
         waiver = release_waiver(ctx.config, "allow_sysid_waiver", "sysid_waiver_reason")
         if physics_passed:
@@ -1420,7 +1475,7 @@ def _impl_release_candidate_gate(
             failures.append("release-candidate profile requires Newton or PACE SysID evidence, or an explicit SysID waiver")
 
     if release_requires(ctx.config, "require_heldout_session_for_human_review"):
-        data_gate = previous.get("real_data_quality_gate")
+        data_gate = flat_previous.get("real_data_quality_gate")
         metrics = data_gate.metrics if data_gate else {}
         heldout_episodes = int(metrics.get("heldout_episodes", 0) or 0)
         heldout_min = int(ctx.config.release.get("heldout_min_episodes", 1))
@@ -1434,7 +1489,7 @@ def _impl_release_candidate_gate(
             failures.append(f"release-candidate profile requires at least {heldout_min} held-out episode(s)")
 
     if release_requires(ctx.config, "require_isaaclab_rollout_for_human_review"):
-        rollout = previous.get("isaaclab_rollout_regression")
+        rollout = flat_previous.get("isaaclab_rollout_regression")
         waiver = release_waiver(ctx.config, "allow_isaaclab_rollout_waiver", "isaaclab_rollout_waiver_reason")
         if rollout and rollout.status == "pass":
             requirement_checks["isaaclab_rollout"] = "pass"
@@ -1445,7 +1500,7 @@ def _impl_release_candidate_gate(
             failures.append("release-candidate profile requires true Isaac Lab rollout regression evidence")
 
     if release_requires(ctx.config, "require_user_policy_artifacts_for_human_review"):
-        policy = previous.get("policy_artifact_audit")
+        policy = flat_previous.get("policy_artifact_audit")
         using_sample = bool(policy and policy.metrics.get("using_sample_artifacts", False))
         if policy and policy.status == "pass" and not using_sample:
             requirement_checks["policy_artifacts"] = "pass"
@@ -1458,6 +1513,11 @@ def _impl_release_candidate_gate(
         skill_out / "release_gate_review.json",
         {
             "previous_skills": {skill_id: result.to_dict() for skill_id, result in previous.items()},
+            "subchecks": {
+                skill_id: result.to_dict()
+                for skill_id, result in sorted(flat_previous.items())
+                if skill_id not in previous
+            },
             "blocking_failures": failures,
             "requirement_checks": requirement_checks,
             "safe_to_autorun_robot": False,
@@ -1505,7 +1565,369 @@ def _impl_real_robot_gate(
     )
 
 
+def _subcheck_manifest(
+    skill_id: str,
+    implementation: str,
+    *,
+    release_blocking: bool = True,
+    human_required: bool = False,
+    real_robot: bool = False,
+) -> SkillManifest:
+    return SkillManifest(
+        path=Path("skills") / skill_id / "skill.json",
+        data={
+            "id": skill_id,
+            "name": skill_id,
+            "owner_agent": "internal_subcheck",
+            "description": f"Internal subcheck for consolidated skill: {skill_id}",
+            "implementation": implementation,
+            "inputs": [],
+            "outputs": [],
+            "validators": ["validated by consolidated parent skill"],
+            "quality_gate": {"min_score": SUBCHECK_MIN_SCORES.get(skill_id, 0.0)},
+            "human_required": human_required,
+            "release_blocking": release_blocking,
+            "real_robot": real_robot,
+        },
+    )
+
+
+def _run_subcheck(
+    skill_id: str,
+    implementation: str,
+    ctx: HarnessContext,
+    parent_out: Path,
+    previous: dict[str, SkillResult],
+    *,
+    release_blocking: bool = True,
+    human_required: bool = False,
+) -> SkillResult:
+    impl = INTERNAL_IMPLEMENTATIONS[implementation]
+    manifest = _subcheck_manifest(
+        skill_id,
+        implementation,
+        release_blocking=release_blocking,
+        human_required=human_required,
+    )
+    sub_out = parent_out / "subchecks" / skill_id
+    sub_out.mkdir(parents=True, exist_ok=True)
+    result = impl(manifest, ctx, sub_out, previous)
+    result.release_blocking = release_blocking
+    result.human_required = human_required
+    result = _apply_quality_gate(manifest, result)
+    (sub_out / "result.json").write_text(json.dumps(result.to_dict(), indent=2, sort_keys=True) + "\n")
+    return result
+
+
+def _aggregate_subchecks(
+    manifest: SkillManifest,
+    skill_out: Path,
+    artifact_name: str,
+    subchecks: dict[str, SkillResult],
+    *,
+    blocking_statuses: dict[str, set[str]] | None = None,
+    metrics: dict[str, Any] | None = None,
+    warnings: list[str] | None = None,
+) -> SkillResult:
+    blocking_statuses = blocking_statuses or {}
+    failures: list[str] = []
+    inherited_warnings = list(warnings or [])
+    for skill_id, result in subchecks.items():
+        statuses = blocking_statuses.get(skill_id)
+        if statuses is None:
+            statuses = BLOCKING_SKILL_STATUSES if result.release_blocking else {"fail"}
+        if result.status in statuses:
+            details = result.blocking_failures or result.warnings or [result.status]
+            failures.append(f"{skill_id}: {details}")
+        inherited_warnings.extend(f"{skill_id}: {warning}" for warning in result.warnings)
+
+    pass_scores = [result.quality_score for result in subchecks.values() if result.status == "pass"]
+    confidences = [result.confidence for result in subchecks.values()]
+    status = "fail" if failures else "pass"
+    quality = sum(pass_scores) / len(pass_scores) if pass_scores else 0.0
+    confidence = sum(confidences) / len(confidences) if confidences else 0.0
+    subcheck_payload = {skill_id: result.to_dict() for skill_id, result in subchecks.items()}
+    aggregate_metrics = {
+        "subchecks": subcheck_payload,
+        "subcheck_statuses": {skill_id: result.status for skill_id, result in subchecks.items()},
+        **(metrics or {}),
+    }
+    evidence = _write_json(
+        skill_out / artifact_name,
+        {
+            "status": status,
+            "blocking_failures": failures,
+            "warnings": inherited_warnings,
+            "subchecks": subcheck_payload,
+            "metrics": metrics or {},
+        },
+    )
+    evidence_files = [evidence]
+    for result in subchecks.values():
+        evidence_files.extend(result.evidence_files)
+    return SkillResult(
+        skill_id=manifest.skill_id,
+        status=status,
+        quality_score=quality,
+        confidence=confidence,
+        blocking_failures=failures,
+        warnings=inherited_warnings,
+        evidence_files=list(dict.fromkeys(evidence_files)),
+        metrics=aggregate_metrics,
+    )
+
+
+def _impl_project_preflight(
+    manifest: SkillManifest,
+    ctx: HarnessContext,
+    skill_out: Path,
+    previous: dict[str, SkillResult],
+) -> SkillResult:
+    subchecks: dict[str, SkillResult] = {}
+    local_previous = dict(previous)
+    for skill_id, implementation in [
+        ("env_preflight", "env_preflight"),
+        ("ros_preflight", "ros_preflight"),
+        ("isaaclab_task_check", "isaaclab_task_check"),
+        ("policy_artifact_audit", "policy_artifact_audit"),
+    ]:
+        result = _run_subcheck(skill_id, implementation, ctx, skill_out, local_previous)
+        subchecks[skill_id] = result
+        local_previous[skill_id] = result
+    policy = subchecks["policy_artifact_audit"]
+    env = subchecks["env_preflight"]
+    return _aggregate_subchecks(
+        manifest,
+        skill_out,
+        "project_preflight.json",
+        subchecks,
+        metrics={
+            "required_commands_present": env.metrics.get("required_commands_present"),
+            "newton_available": env.metrics.get("newton_available"),
+            "pace_available": env.metrics.get("pace_available"),
+            "local_sysid_available": env.metrics.get("local_sysid_available"),
+            "using_sample_artifacts": policy.metrics.get("using_sample_artifacts"),
+            "artifact_completeness": policy.metrics.get("artifact_completeness"),
+        },
+    )
+
+
+def _impl_real_data_evidence_gate(
+    manifest: SkillManifest,
+    ctx: HarnessContext,
+    skill_out: Path,
+    previous: dict[str, SkillResult],
+) -> SkillResult:
+    subchecks: dict[str, SkillResult] = {}
+    local_previous = _flatten_previous_results(previous)
+    for skill_id, implementation, human_required in [
+        ("real_data_quality_gate", "real_data_quality_gate", False),
+        ("pose_repeatability", "pose_repeatability", True),
+    ]:
+        result = _run_subcheck(
+            skill_id,
+            implementation,
+            ctx,
+            skill_out,
+            local_previous,
+            human_required=human_required,
+        )
+        subchecks[skill_id] = result
+        local_previous[skill_id] = result
+    data_quality = subchecks["real_data_quality_gate"]
+    pose = subchecks["pose_repeatability"]
+    return _aggregate_subchecks(
+        manifest,
+        skill_out,
+        "real_data_evidence_gate.json",
+        subchecks,
+        metrics={
+            **data_quality.metrics,
+            "pose_repeatability": pose.metrics,
+        },
+    )
+
+
+def _impl_physics_sysid(
+    manifest: SkillManifest,
+    ctx: HarnessContext,
+    skill_out: Path,
+    previous: dict[str, SkillResult],
+) -> SkillResult:
+    subchecks: dict[str, SkillResult] = {}
+    local_previous = _flatten_previous_results(previous)
+    for skill_id, implementation, release_blocking, human_required in [
+        ("sysid_step_response", "sysid_step_response", True, True),
+        ("newton_sysid", "newton_sysid", False, False),
+        ("pace_sysid", "pace_sysid", False, False),
+    ]:
+        result = _run_subcheck(
+            skill_id,
+            implementation,
+            ctx,
+            skill_out,
+            local_previous,
+            release_blocking=release_blocking,
+            human_required=human_required,
+        )
+        subchecks[skill_id] = result
+        local_previous[skill_id] = result
+    local = subchecks["sysid_step_response"]
+    newton = subchecks["newton_sysid"]
+    pace = subchecks["pace_sysid"]
+    physics_required = release_requires(ctx.config, "require_physics_sysid_for_human_review")
+    waiver = release_waiver(ctx.config, "allow_sysid_waiver", "sysid_waiver_reason")
+    backend_passed = newton.status == "pass" or pace.status == "pass"
+    result = _aggregate_subchecks(
+        manifest,
+        skill_out,
+        "physics_sysid.json",
+        subchecks,
+        blocking_statuses={
+            "newton_sysid": {"fail"},
+            "pace_sysid": {"fail"},
+        },
+        metrics={
+            **local.metrics,
+            "local_log_estimator": "used",
+            "newton_sysid": newton.status,
+            "pace_sysid": pace.status,
+            "physics_backend_passed": backend_passed,
+            "physics_required": physics_required,
+            "sysid_waiver": waiver,
+        },
+    )
+    if physics_required and not backend_passed and not waiver["allowed"]:
+        result.status = "fail"
+        result.blocking_failures.append(
+            "physics profile requires Newton or PACE SysID evidence, but neither backend passed"
+        )
+    if bool(ctx.config.sysid.get("require_newton", False)) and newton.status != "pass":
+        result.status = "fail"
+        result.blocking_failures.append("config.sysid.require_newton is true, but Newton SysID did not pass")
+    if bool(ctx.config.sysid.get("require_pace", False)) and pace.status != "pass":
+        result.status = "fail"
+        result.blocking_failures.append("config.sysid.require_pace is true, but PACE SysID did not pass")
+    return result
+
+
+def _impl_agentic_tuning_plan(
+    manifest: SkillManifest,
+    ctx: HarnessContext,
+    skill_out: Path,
+    previous: dict[str, SkillResult],
+) -> SkillResult:
+    subchecks: dict[str, SkillResult] = {}
+    local_previous = _flatten_previous_results(previous)
+    for skill_id, implementation in [
+        ("domain_randomization_update", "domain_randomization_update"),
+        ("action_scale_sweep", "action_scale_sweep"),
+        ("autoresearch_planner", "autoresearch_planner"),
+    ]:
+        result = _run_subcheck(skill_id, implementation, ctx, skill_out, local_previous)
+        subchecks[skill_id] = result
+        local_previous[skill_id] = result
+    dr = subchecks["domain_randomization_update"]
+    action = subchecks["action_scale_sweep"]
+    plan = subchecks["autoresearch_planner"]
+    return _aggregate_subchecks(
+        manifest,
+        skill_out,
+        "agentic_tuning_plan.json",
+        subchecks,
+        metrics={
+            "object_pos_noise": dr.metrics.get("object_pos_noise"),
+            "friction_sweep": dr.metrics.get("friction_sweep"),
+            "candidates": action.metrics.get("candidates"),
+            "suggested": action.metrics.get("suggested"),
+            "experiment_count": plan.metrics.get("experiment_count"),
+            "transfer_score": plan.metrics.get("transfer_score"),
+        },
+    )
+
+
+def _impl_regression_evaluation(
+    manifest: SkillManifest,
+    ctx: HarnessContext,
+    skill_out: Path,
+    previous: dict[str, SkillResult],
+) -> SkillResult:
+    subchecks: dict[str, SkillResult] = {}
+    local_previous = _flatten_previous_results(previous)
+    for skill_id, implementation in [
+        ("sim_eval_regression", "sim_eval_regression"),
+        ("isaaclab_rollout_regression", "isaaclab_rollout_regression"),
+    ]:
+        result = _run_subcheck(skill_id, implementation, ctx, skill_out, local_previous)
+        subchecks[skill_id] = result
+        local_previous[skill_id] = result
+    sim_eval = subchecks["sim_eval_regression"]
+    rollout = subchecks["isaaclab_rollout_regression"]
+    rollout_metrics = rollout.metrics if isinstance(rollout.metrics, dict) else {}
+    return _aggregate_subchecks(
+        manifest,
+        skill_out,
+        "regression_evaluation.json",
+        subchecks,
+        metrics={
+            **sim_eval.metrics,
+            "isaaclab_rollout": rollout_metrics,
+            "isaaclab_rollout_status": rollout.status,
+        },
+    )
+
+
+def _flatten_previous_results(previous: dict[str, SkillResult]) -> dict[str, SkillResult]:
+    flattened = dict(previous)
+    for result in previous.values():
+        subchecks = result.metrics.get("subchecks", {}) if isinstance(result.metrics, dict) else {}
+        if not isinstance(subchecks, dict):
+            continue
+        for skill_id, payload in subchecks.items():
+            if skill_id not in flattened and isinstance(payload, dict):
+                flattened[skill_id] = _result_from_dict(skill_id, payload)
+    return flattened
+
+
+def _result_from_dict(skill_id: str, payload: dict[str, Any]) -> SkillResult:
+    return SkillResult(
+        skill_id=skill_id,
+        status=str(payload.get("status", "unknown")),
+        quality_score=float(payload.get("quality_score", 0.0) or 0.0),
+        confidence=float(payload.get("confidence", 0.0) or 0.0),
+        blocking_failures=[str(item) for item in payload.get("blocking_failures", [])],
+        warnings=[str(item) for item in payload.get("warnings", [])],
+        evidence_files=[str(item) for item in payload.get("evidence_files", [])],
+        metrics=dict(payload.get("metrics", {})),
+        human_required=bool(payload.get("human_required", False)),
+        release_blocking=bool(payload.get("release_blocking", False)),
+    )
+
+
+INTERNAL_IMPLEMENTATIONS: dict[str, Callable[[SkillManifest, HarnessContext, Path, dict[str, SkillResult]], SkillResult]] = {
+    "env_preflight": _impl_env_preflight,
+    "isaaclab_task_check": _impl_isaaclab_task_check,
+    "policy_artifact_audit": _impl_policy_artifact_audit,
+    "ros_preflight": _impl_ros_preflight,
+    "real_data_quality_gate": _impl_real_data_quality_gate,
+    "pose_repeatability": _impl_pose_repeatability,
+    "sysid_step_response": _impl_sysid_step_response,
+    "newton_sysid": _impl_newton_sysid,
+    "pace_sysid": _impl_pace_sysid,
+    "domain_randomization_update": _impl_domain_randomization_update,
+    "action_scale_sweep": _impl_action_scale_sweep,
+    "autoresearch_planner": _impl_autoresearch_planner,
+    "sim_eval_regression": _impl_sim_eval_regression,
+    "isaaclab_rollout_regression": _impl_isaaclab_rollout_regression,
+}
+
+
 IMPLEMENTATIONS: dict[str, Callable[[SkillManifest, HarnessContext, Path, dict[str, SkillResult]], SkillResult]] = {
+    "project_preflight": _impl_project_preflight,
+    "real_data_evidence_gate": _impl_real_data_evidence_gate,
+    "physics_sysid": _impl_physics_sysid,
+    "agentic_tuning_plan": _impl_agentic_tuning_plan,
+    "regression_evaluation": _impl_regression_evaluation,
     "env_preflight": _impl_env_preflight,
     "isaaclab_task_check": _impl_isaaclab_task_check,
     "policy_artifact_audit": _impl_policy_artifact_audit,

@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 
+UI_AUDIENCES = {"customer", "developer"}
+
 DEFAULTS: dict[str, Any] = {
     "isaac_lab": {
         "root": "~/IsaacLab",
@@ -101,6 +103,9 @@ DEFAULTS: dict[str, Any] = {
         "allow_retries": False,
         "budget_skill_calls": 24,
     },
+    "ui": {
+        "audience": "customer",
+    },
     "sysid": {
         "sysid_backend_preference": ["newton", "pace", "local"],
         "newton_enabled": False,
@@ -153,6 +158,7 @@ class PipelineConfig:
     policy: dict[str, Any] = field(default_factory=dict)
     release: dict[str, Any] = field(default_factory=dict)
     llm_orchestrator: dict[str, Any] = field(default_factory=dict)
+    ui: dict[str, Any] = field(default_factory=dict)
     sysid: dict[str, Any] = field(default_factory=dict)
     safety: dict[str, Any] = field(default_factory=dict)
 
@@ -167,6 +173,7 @@ class PipelineConfig:
             "policy": self.policy,
             "release": self.release,
             "llm_orchestrator": self.llm_orchestrator,
+            "ui": self.ui,
             "sysid": self.sysid,
             "safety": self.safety,
         }
@@ -175,6 +182,30 @@ class PipelineConfig:
 def load_config(path: str | Path) -> PipelineConfig:
     data = json.loads(Path(path).expanduser().read_text())
     merged = _deep_merge(DEFAULTS, data)
+    return _config_from_merged(merged)
+
+
+def config_with_ui_audience(config: PipelineConfig, audience: str | None) -> PipelineConfig:
+    if audience is None:
+        normalize_ui_audience(config.ui.get("audience"))
+        return config
+    merged = config.merged()
+    merged["ui"] = dict(merged.get("ui", {}))
+    merged["ui"]["audience"] = normalize_ui_audience(audience)
+    return _config_from_merged(merged)
+
+
+def normalize_ui_audience(audience: Any) -> str:
+    value = str(audience or "customer").strip().lower()
+    if value not in UI_AUDIENCES:
+        allowed = ", ".join(sorted(UI_AUDIENCES))
+        raise ValueError(f"ui.audience must be one of: {allowed}")
+    return value
+
+
+def _config_from_merged(merged: dict[str, Any]) -> PipelineConfig:
+    merged["ui"] = dict(merged.get("ui", {}))
+    merged["ui"]["audience"] = normalize_ui_audience(merged.get("ui", {}).get("audience"))
     return PipelineConfig(
         isaac_lab=dict(merged["isaac_lab"]),
         robot=dict(merged["robot"]),
@@ -185,6 +216,7 @@ def load_config(path: str | Path) -> PipelineConfig:
         policy=dict(merged["policy"]),
         release=dict(merged["release"]),
         llm_orchestrator=dict(merged["llm_orchestrator"]),
+        ui=dict(merged["ui"]),
         sysid=dict(merged["sysid"]),
         safety=dict(merged["safety"]),
     )

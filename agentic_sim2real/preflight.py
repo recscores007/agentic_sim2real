@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import PipelineConfig, choose_task
+from .release_policy import release_profile, release_requires, release_waiver
 
 
 REQUIRED_COMMANDS = ["python3"]
@@ -21,6 +22,7 @@ def run_preflight(config: PipelineConfig, root: str | Path = ".") -> dict[str, A
     isaac_lab_checks = _check_isaac_lab(config, checks)
     isaac_ros_checks = _check_isaac_ros(config, checks)
     sysid_checks = _check_sysid_backends(config, checks)
+    required_physics_checks = _check_required_physics(config, sysid_checks, checks)
 
     failures = [check["message"] for check in checks if check["status"] == "fail"]
     warnings = [check["message"] for check in checks if check["status"] == "warn"]
@@ -34,6 +36,7 @@ def run_preflight(config: PipelineConfig, root: str | Path = ".") -> dict[str, A
         "isaac_lab": isaac_lab_checks,
         "isaac_ros": isaac_ros_checks,
         "sysid_backends": sysid_checks,
+        "required_physics": required_physics_checks,
         "checks": checks,
         "failures": failures,
         "warnings": warnings,
@@ -150,6 +153,8 @@ def _check_sysid_backends(config: PipelineConfig, checks: list[dict[str, Any]]) 
     pace_entrypoint_available = bool(pace_fit and pace_fit.exists() and pace_source and pace_source.exists())
     newton_command = [str(item) for item in sysid.get("newton_command", [])]
     pace_command = [str(item) for item in sysid.get("pace_command", [])]
+    newton_command_is_stub = _command_looks_like_stub(newton_command)
+    pace_command_is_stub = _command_looks_like_stub(pace_command)
     newton_available = bool(newton_entrypoint_available or newton_command)
     pace_task = str(sysid.get("pace_task", "")).strip()
     pace_data_dir = str(sysid.get("pace_data_dir", "")).strip()
@@ -159,7 +164,9 @@ def _check_sysid_backends(config: PipelineConfig, checks: list[dict[str, Any]]) 
     pace_enabled = bool(sysid.get("pace_enabled", False))
 
     if newton_command:
-        _add(checks, "sysid", "newton", "pass", "custom Newton SysID command is configured")
+        status = "warn" if newton_command_is_stub else "pass"
+        message = "custom Newton SysID command appears to be a stub" if newton_command_is_stub else "custom Newton SysID command is configured"
+        _add(checks, "sysid", "newton", status, message)
     elif newton_entrypoint_available:
         _add(checks, "sysid", "newton", "pass", "IsaacLab-Newton SysID entrypoint found", path=str(newton_script))
     elif newton_enabled:
@@ -168,7 +175,9 @@ def _check_sysid_backends(config: PipelineConfig, checks: list[dict[str, Any]]) 
         _add(checks, "sysid", "newton", "warn", "Newton SysID is not available; configure sysid.newton_root or ISAACLAB_NEWTON_ROOT to use it")
 
     if pace_command:
-        _add(checks, "sysid", "pace", "pass", "custom PACE backup SysID command is configured")
+        status = "warn" if pace_command_is_stub else "pass"
+        message = "custom PACE backup SysID command appears to be a stub" if pace_command_is_stub else "custom PACE backup SysID command is configured"
+        _add(checks, "sysid", "pace", status, message)
     elif pace_default_runnable:
         _add(checks, "sysid", "pace", "pass", "PACE backup SysID entrypoint found", path=str(pace_fit))
     elif pace_entrypoint_available and pace_enabled:
@@ -189,6 +198,7 @@ def _check_sysid_backends(config: PipelineConfig, checks: list[dict[str, Any]]) 
             "entrypoint": str(newton_script) if newton_script else "",
             "entrypoint_available": newton_entrypoint_available,
             "command_configured": bool(newton_command),
+            "command_is_stub": newton_command_is_stub,
             "available": newton_available,
         },
         "pace": {
@@ -197,6 +207,7 @@ def _check_sysid_backends(config: PipelineConfig, checks: list[dict[str, Any]]) 
             "entrypoint": str(pace_fit) if pace_fit else "",
             "entrypoint_available": pace_entrypoint_available,
             "command_configured": bool(pace_command),
+            "command_is_stub": pace_command_is_stub,
             "available": pace_available,
             "task": pace_task,
             "task_configured": bool(pace_task),
@@ -207,11 +218,77 @@ def _check_sysid_backends(config: PipelineConfig, checks: list[dict[str, Any]]) 
     }
 
 
+def _check_required_physics(
+    config: PipelineConfig,
+    sysid_checks: dict[str, Any],
+    checks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    physics_required = release_requires(config, "require_physics_sysid_for_human_review")
+    waiver = release_waiver(config, "allow_sysid_waiver", "sysid_waiver_reason")
+    require_newton = bool(config.sysid.get("require_newton", False))
+    require_pace = bool(config.sysid.get("require_pace", False))
+    newton = sysid_checks["newton"]
+    pace = sysid_checks["pace"]
+    term = os.environ.get("TERM", "")
+    gpu_command = shutil.which("nvidia-smi")
+
+    result = {
+        "release_profile": release_profile(config),
+        "physics_required": physics_required,
+        "sysid_waiver": waiver,
+        "require_newton": require_newton,
+        "require_pace": require_pace,
+        "newton_available": bool(newton["available"]),
+        "pace_available": bool(pace["available"]),
+        "term": term,
+        "nvidia_smi": gpu_command,
+    }
+
+    if not physics_required and not require_newton and not require_pace:
+        _add(checks, "required_physics", "profile", "pass", "physics SysID is optional for this profile")
+        return result
+
+    if waiver["allowed"]:
+        _add(checks, "required_physics", "waiver", "warn", f"physics SysID requirement waived: {waiver['reason']}")
+        return result
+
+    if physics_required and not (newton["available"] or pace["available"]):
+        _add(checks, "required_physics", "backend", "fail", "profile requires Newton or PACE SysID, but neither backend is available")
+    elif physics_required:
+        _add(checks, "required_physics", "backend", "pass", "profile requires physics SysID and at least one backend is available")
+
+    if require_newton and not newton["available"]:
+        _add(checks, "required_physics", "newton", "fail", "config.sysid.require_newton is true but Newton is unavailable")
+    if require_pace and not pace["available"]:
+        _add(checks, "required_physics", "pace", "fail", "config.sysid.require_pace is true but PACE is unavailable")
+
+    if (physics_required or require_newton) and newton["command_is_stub"]:
+        _add(checks, "required_physics", "newton_stub", "fail", "required Newton SysID cannot use a stub command")
+    if (physics_required or require_pace) and pace["command_is_stub"]:
+        _add(checks, "required_physics", "pace_stub", "fail", "required PACE SysID cannot use a stub command")
+
+    if physics_required and term.strip().lower() in {"", "dumb"}:
+        _add(checks, "required_physics", "term", "fail", "physics profile requires an interactive-capable TERM; set TERM=xterm-256color before launching Isaac/PACE")
+    elif term:
+        _add(checks, "required_physics", "term", "pass", f"TERM={term}")
+
+    if physics_required and not gpu_command:
+        _add(checks, "required_physics", "gpu", "warn", "nvidia-smi not found; GPU simulator jobs may fail unless this environment is a CPU-only adapter or remote launcher")
+    elif gpu_command:
+        _add(checks, "required_physics", "gpu", "pass", "nvidia-smi found", path=gpu_command)
+
+    return result
+
+
 def _configured_root(value: Any, env_name: str) -> Path | None:
     root = str(value or os.environ.get(env_name, "")).strip()
     if not root:
         return None
     return Path(root).expanduser().resolve()
+
+
+def _command_looks_like_stub(command: list[str]) -> bool:
+    return any("stub" in item.lower() for item in command)
 
 
 def _recommendations(sysid_checks: dict[str, Any]) -> list[str]:

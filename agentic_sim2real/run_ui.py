@@ -6,21 +6,15 @@ from html import escape
 from pathlib import Path
 from typing import Any
 
+from .config import normalize_ui_audience
+
 
 UI_SCHEMA_VERSION = "agentic_sim2real.pipeline_ui.v1"
 
 AGENTIC_PROPOSAL_SKILLS = {
-    "autoresearch_planner": {
-        "role": "Hypothesis and experiment planning",
-        "why_agentic": "Chooses what to investigate next from messy evidence.",
-    },
-    "domain_randomization_update": {
-        "role": "Bounded sim-parameter proposal",
-        "why_agentic": "Turns measured gaps into candidate DR ranges for validation.",
-    },
-    "action_scale_sweep": {
-        "role": "Bounded control-parameter proposal",
-        "why_agentic": "Suggests action-scale candidates from stiction/contact evidence.",
+    "agentic_tuning_plan": {
+        "role": "Bounded hypothesis, parameter, and experiment proposal",
+        "why_agentic": "Interprets measured gaps and proposes candidate sim/action updates for deterministic validation.",
     },
 }
 
@@ -29,8 +23,8 @@ NONDETERMINISTIC_COVERAGE = [
         "responsibility": "Gap triage",
         "covered_by": "LLM orchestrator",
         "is_atomic_skill": False,
-        "skill_ids": ["real_data_quality_gate", "pose_repeatability", "sysid_step_response"],
-        "validation": "Guardrails require known skills and complete dependencies; selected skills produce metrics.",
+        "skill_ids": ["real_data_evidence_gate", "physics_sysid"],
+        "validation": "Guardrails require known consolidated skills and complete dependencies; each skill expands into developer subchecks.",
     },
     {
         "responsibility": "Skill ordering",
@@ -41,30 +35,30 @@ NONDETERMINISTIC_COVERAGE = [
     },
     {
         "responsibility": "Hypothesis generation",
-        "covered_by": "autoresearch_planner",
-        "is_atomic_skill": True,
-        "skill_ids": ["autoresearch_planner"],
+        "covered_by": "agentic_tuning_plan",
+        "is_atomic_skill": False,
+        "skill_ids": ["agentic_tuning_plan/subchecks/autoresearch_planner"],
         "validation": "Plan must emit enough experiments and cite measured gap evidence.",
     },
     {
         "responsibility": "Experiment planning",
-        "covered_by": "autoresearch_planner",
-        "is_atomic_skill": True,
-        "skill_ids": ["autoresearch_planner", "newton_sysid", "pace_sysid", "sim_eval_regression"],
+        "covered_by": "agentic_tuning_plan + regression_evaluation",
+        "is_atomic_skill": False,
+        "skill_ids": ["agentic_tuning_plan", "regression_evaluation"],
         "validation": "Proposed experiments must map to manifest-backed skills or explicit human review.",
     },
     {
         "responsibility": "Candidate parameter proposals",
-        "covered_by": "domain_randomization_update, action_scale_sweep",
-        "is_atomic_skill": True,
-        "skill_ids": ["domain_randomization_update", "action_scale_sweep"],
+        "covered_by": "agentic_tuning_plan",
+        "is_atomic_skill": False,
+        "skill_ids": ["agentic_tuning_plan/subchecks/domain_randomization_update", "agentic_tuning_plan/subchecks/action_scale_sweep"],
         "validation": "Candidate ranges are bounded by safety caps, pose gates, friction bounds, and contact limits.",
     },
     {
         "responsibility": "Critic challenge",
         "covered_by": "evaluation_loop critic + regression skills",
         "is_atomic_skill": False,
-        "skill_ids": ["sim_eval_regression", "isaaclab_rollout_regression"],
+        "skill_ids": ["regression_evaluation"],
         "validation": "Weak evidence, low confidence, sparse labels, skipped backends, and regressions become warnings or blockers.",
     },
     {
@@ -82,6 +76,7 @@ def write_pipeline_ui(
     *,
     run_status: str = "complete",
     journal_path: str | Path | None = None,
+    audience: str | None = None,
 ) -> dict[str, str]:
     """Write a static, intuitive UI for one pipeline run.
 
@@ -103,9 +98,12 @@ def write_pipeline_ui(
     journal = _read_journal(run, journal_path)
 
     mode = str(pipeline_input.get("mode") or scorecard.get("mode") or "characterization")
+    ui_audience = _resolve_audience(audience, pipeline_input, scorecard, pipeline_output, run_record, scoreboard)
     state = {
         "schema_version": UI_SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "audience": ui_audience,
+        "available_audiences": ["customer", "developer"],
         "run": {
             "dir": str(run),
             "status": run_status,
@@ -139,6 +137,21 @@ def write_pipeline_ui(
     state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
     index_path.write_text(_html(state) + "\n")
     return {"ui": str(index_path), "state": str(state_path)}
+
+
+def _resolve_audience(audience: str | None, *payloads: dict[str, Any]) -> str:
+    candidates: list[Any] = [audience]
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        candidates.append(payload.get("audience"))
+        ui = payload.get("ui")
+        if isinstance(ui, dict):
+            candidates.append(ui.get("audience"))
+    for candidate in candidates:
+        if candidate not in (None, ""):
+            return normalize_ui_audience(candidate)
+    return "customer"
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -216,6 +229,11 @@ def _scoreboard_summary(scoreboard: dict[str, Any]) -> dict[str, Any]:
         _skill_row(skill_id, result)
         for skill_id, result in sorted(skills.items())
     ]
+    subcheck_rows = [
+        _skill_row(skill_id, result)
+        for skill_id, result in sorted(scoreboard.get("subchecks", {}).items())
+        if isinstance(result, dict)
+    ]
     agentic_rows = [
         {
             **row,
@@ -246,6 +264,7 @@ def _scoreboard_summary(scoreboard: dict[str, Any]) -> dict[str, Any]:
         "nondeterministic_coverage": NONDETERMINISTIC_COVERAGE,
         "agentic_proposal_skills": agentic_rows,
         "deterministic_validation_skills": deterministic_rows,
+        "developer_subchecks": subcheck_rows,
         "skills": skill_rows,
     }
 
@@ -428,7 +447,7 @@ def _recommended_actions(scoreboard: dict[str, Any], skill_rows: list[dict[str, 
                     "reason": f"{skill_id} produced no fitted-parameter evidence in this run.",
                 }
             )
-        elif status == "not_applicable" and skill_id == "isaaclab_rollout_regression":
+        elif status == "not_applicable" and skill_id in {"isaaclab_rollout_regression", "regression_evaluation"}:
             actions.append(
                 {
                     "owner": "User",
@@ -446,7 +465,7 @@ def _recommended_actions(scoreboard: dict[str, Any], skill_rows: list[dict[str, 
                     "reason": f"Confidence is {confidence:.3f}, which is only at or below the auto-promotion floor.",
                 }
             )
-        elif skill_id == "real_data_quality_gate" and warnings:
+        elif skill_id in {"real_data_quality_gate", "real_data_evidence_gate"} and warnings:
             actions.append(
                 {
                     "owner": "User",
@@ -455,7 +474,7 @@ def _recommended_actions(scoreboard: dict[str, Any], skill_rows: list[dict[str, 
                     "reason": "The real-data gate passed but warned that some evidence is sparse.",
                 }
             )
-        elif skill_id == "policy_artifact_audit" and warnings:
+        elif skill_id in {"policy_artifact_audit", "project_preflight"} and any("sample policy" in warning for warning in warnings):
             actions.append(
                 {
                     "owner": "User",
@@ -520,6 +539,21 @@ def _quality_rationale(
     if status == "not_approved":
         return "Quality is 0.0 because this is a human approval gate and hardware was not approved."
 
+    if skill_id == "project_preflight":
+        subchecks = metrics.get("subcheck_statuses", {})
+        return f"Quality is the average of passing setup/config/artifact subchecks; subcheck_statuses={subchecks}."
+    if skill_id == "real_data_evidence_gate":
+        return _real_data_quality_rationale(metrics, warnings)
+    if skill_id == "physics_sysid":
+        return "Quality is driven by the local log-based SysID subcheck; optional Newton/PACE backend skips are recorded as developer subchecks."
+    if skill_id == "agentic_tuning_plan":
+        suggested = metrics.get("suggested")
+        experiments = metrics.get("experiment_count")
+        return f"Quality averages bounded DR, action-scale, and AutoResearch proposal subchecks; suggested_action_scale={suggested}, experiment_count={experiments}."
+    if skill_id == "regression_evaluation":
+        delta = _float_or_none(metrics.get("success_delta"))
+        rollout_status = metrics.get("isaaclab_rollout_status")
+        return f"Quality is based on sim regression plus optional Isaac Lab rollout evidence; success_delta={delta}, isaaclab_rollout_status={rollout_status}."
     if skill_id == "env_preflight":
         return "Quality is 1.0 when required local preflight checks have no blocking failures; warnings remain informational."
     if skill_id == "isaaclab_task_check":
@@ -575,6 +609,9 @@ def _confidence_rationale(
         return "No confidence rationale is available because no confidence score was reported."
     if status in {"evidence_missing", "not_applicable", "not_approved"}:
         return "Confidence here means the harness is confident about the skip/block decision, not that the skill succeeded."
+    if skill_id in {"project_preflight", "real_data_evidence_gate", "physics_sysid", "agentic_tuning_plan", "regression_evaluation"}:
+        subchecks = metrics.get("subcheck_statuses", {})
+        return f"Confidence is averaged from developer subchecks under this consolidated skill; subcheck_statuses={subchecks}."
     if skill_id == "real_data_quality_gate":
         episodes = metrics.get("episodes")
         return f"Confidence is min(1.0, episodes / configured minimum episodes); episodes={episodes}, confidence={confidence}."
@@ -621,9 +658,9 @@ def _real_data_quality_rationale(metrics: dict[str, Any], warnings: list[str]) -
 
 
 def _warning_action(skill_id: str, warnings: list[str], fallback: str) -> str:
-    if skill_id == "real_data_quality_gate":
+    if skill_id in {"real_data_quality_gate", "real_data_evidence_gate"}:
         return "Resolve data warnings: add success labels, held-out episodes, joint velocities, calibration, or camera provenance as applicable."
-    if skill_id == "policy_artifact_audit":
+    if skill_id in {"policy_artifact_audit", "project_preflight"}:
         return "Replace sample policy artifacts with the real trained policy bundle before release-candidate review."
     return warnings[0] if warnings else fallback
 
@@ -654,33 +691,48 @@ def _workflow(mode: str, scoreboard: dict[str, Any], scorecard: dict[str, Any]) 
     characterization_status = "active" if mode == "characterization" else "complete"
     return [
         {
+            "index": 1,
             "stage": "Real data submitted",
+            "lane": "Input",
             "owner": "Human",
             "status": "complete" if scorecard else "pending",
+            "summary": "Recorded rollouts, labels, calibration, and raw evidence enter the run.",
             "artifact": "rollout_data.json",
         },
         {
+            "index": 2,
             "stage": "Characterize gaps",
+            "lane": "Agent + measurement",
             "owner": "Agent + Evaluator",
             "status": characterization_status,
+            "summary": "The orchestrator chooses known skills; the harness measures data quality, pose, SysID, and regression signals.",
             "artifact": "scorecard.characterization",
         },
         {
+            "index": 3,
             "stage": "Tune sim parameters",
+            "lane": "Bounded proposals",
             "owner": "Agent proposes, Evaluator validates",
             "status": validation_status,
+            "summary": "AutoResearch, DR updates, and action-scale candidates stay inside manifest and safety gates.",
             "artifact": "pipeline_output.changes",
         },
         {
+            "index": 4,
             "stage": "Validate policy release",
+            "lane": "Release decision",
             "owner": "Release gate",
             "status": "ready" if release_ready else "not_ready",
+            "summary": "Critic findings, missing evidence, rollout metrics, and release-blocking skills decide review readiness.",
             "artifact": "scorecard.policy_release",
         },
         {
+            "index": 5,
             "stage": "Approve hardware",
+            "lane": "Human safety",
             "owner": "Human",
             "status": human_status,
+            "summary": "Physical robot execution remains supervised and explicitly approved; unattended autorun stays false.",
             "artifact": "human hardware gate",
         },
     ]
@@ -733,14 +785,35 @@ main {{ padding:18px; display:grid; grid-template-columns:1.15fr .85fr; gap:14px
 .metric:nth-child(4) {{ border-top-color:var(--coral); }}
 .metric span {{ color:var(--muted); font-size:12px; font-weight:700; text-transform:uppercase; }}
 .metric b {{ display:block; margin-top:8px; font-size:24px; line-height:1.1; }}
-.workflow {{ display:grid; grid-template-columns:repeat(5, minmax(145px, 1fr)); gap:10px; }}
-.stage {{ border:1px solid var(--line); border-radius:8px; padding:12px; min-height:120px; background:#fff; position:relative; overflow:hidden; }}
-.stage::before {{ content:""; position:absolute; left:0; top:0; bottom:0; width:5px; background:var(--blue); }}
-.stage:nth-child(2)::before {{ background:var(--green); }}
-.stage:nth-child(3)::before {{ background:var(--amber); }}
-.stage:nth-child(4)::before {{ background:var(--violet); }}
-.stage:nth-child(5)::before {{ background:var(--coral); }}
-.stage-title {{ font-weight:700; margin-bottom:8px; padding-left:4px; }}
+.overview-grid {{ display:grid; grid-template-columns:1.25fr .75fr; gap:12px; align-items:stretch; }}
+.status-card {{ border:1px solid var(--line); border-radius:8px; padding:12px; background:#fbfcfe; min-height:118px; }}
+.status-title {{ font-size:20px; font-weight:700; line-height:1.2; margin:8px 0; }}
+.status-copy {{ color:var(--muted); line-height:1.45; margin:0; }}
+.customer-actions {{ margin:10px 0 0; padding-left:18px; color:var(--muted); line-height:1.45; }}
+.customer-actions li {{ margin:4px 0; }}
+.view-note {{ border:1px solid var(--line); border-left:5px solid var(--blue); border-radius:8px; padding:12px; background:#fff; line-height:1.45; }}
+.developer-intro {{ display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; }}
+.audit-note {{ display:flex; flex-wrap:wrap; justify-content:space-between; gap:10px; align-items:center; }}
+.flow-panel {{ padding:16px; }}
+.flow-head {{ display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:14px; }}
+.flow-subhead {{ max-width:760px; margin:0; color:var(--muted); line-height:1.45; }}
+.flow-diagram {{ display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:16px; align-items:stretch; }}
+.flow-node {{ border:1px solid var(--line); border-radius:8px; padding:12px; min-height:190px; background:#fff; position:relative; overflow:visible; display:flex; flex-direction:column; gap:8px; }}
+.flow-node::before {{ content:""; position:absolute; left:0; top:0; right:0; height:5px; background:var(--blue); border-radius:8px 8px 0 0; }}
+.flow-node:nth-child(2)::before {{ background:var(--green); }}
+.flow-node:nth-child(3)::before {{ background:var(--amber); }}
+.flow-node:nth-child(4)::before {{ background:var(--violet); }}
+.flow-node:nth-child(5)::before {{ background:var(--coral); }}
+.flow-node:not(:last-child)::after {{ content:""; position:absolute; top:50%; right:-12px; width:11px; height:11px; border-top:2px solid #9aa8b7; border-right:2px solid #9aa8b7; transform:translateY(-50%) rotate(45deg); background:var(--paper); z-index:2; }}
+.flow-index {{ width:28px; height:28px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:#eef2f7; color:#25384d; font-size:12px; font-weight:700; }}
+.flow-lane {{ color:var(--muted); font-size:12px; font-weight:700; text-transform:uppercase; }}
+.flow-title {{ font-size:16px; line-height:1.25; font-weight:700; }}
+.flow-summary {{ color:var(--muted); line-height:1.4; flex:1; }}
+.flow-artifact {{ padding-top:4px; overflow-wrap:anywhere; }}
+.flow-status-row {{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; }}
+.flow-footer {{ display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; margin-top:14px; }}
+.flow-note {{ border:1px solid var(--line); border-radius:8px; padding:10px; background:#fbfcfe; min-height:72px; }}
+.flow-note b {{ display:block; margin-bottom:5px; }}
 .lane-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }}
 .subgrid {{ display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }}
 .kv {{ border:1px solid var(--line); border-radius:8px; padding:10px; background:#fbfcfe; min-height:72px; }}
@@ -758,13 +831,17 @@ code {{ font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
 .table-wrap {{ overflow-x:auto; }}
 .note {{ color:var(--muted); line-height:1.45; }}
 @media (max-width:1050px) {{
-  main,.lane-grid {{ grid-template-columns:1fr; }}
-  .metrics,.workflow,.journal,.action-grid {{ grid-template-columns:repeat(2, minmax(0, 1fr)); }}
+  main,.lane-grid,.overview-grid {{ grid-template-columns:1fr; }}
+  .metrics,.journal,.action-grid,.flow-footer {{ grid-template-columns:repeat(2, minmax(0, 1fr)); }}
+  .flow-diagram {{ grid-template-columns:1fr; }}
+  .flow-node {{ min-height:0; }}
+  .flow-node:not(:last-child)::after {{ top:auto; right:auto; left:50%; bottom:-14px; transform:translateX(-50%) rotate(135deg); }}
 }}
 @media (max-width:640px) {{
   header {{ padding:14px; }}
   main {{ padding:12px; }}
-  .metrics,.workflow,.journal,.subgrid,.action-grid {{ grid-template-columns:1fr; }}
+  .metrics,.journal,.subgrid,.action-grid,.flow-footer,.developer-intro {{ grid-template-columns:1fr; }}
+  .flow-head {{ display:block; }}
 }}
 </style>
 </head>
@@ -776,6 +853,8 @@ code {{ font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
 <main id="app"></main>
 <script>
 const state = {state_json};
+const audience = String(state.audience || "customer").toLowerCase();
+const isDeveloper = audience === "developer";
 const fmt = (v) => v === null || v === undefined || v === "" ? "n/a" : String(v);
 const pct = (v) => v === null || v === undefined ? "n/a" : `${{Math.round(Number(v) * 100)}}%`;
 const num = (v) => v === null || v === undefined ? "n/a" : Number(v).toFixed(3).replace(/\\.000$/, ".0");
@@ -801,6 +880,7 @@ const readiness = state.data_readiness || {{}};
 const splitScores = state.split_scores || {{}};
 const gap = score.release_gap_score ?? score.sim2real_gap;
 document.getElementById("header-pills").innerHTML = [
+  pill(`${{audience}} view`),
   pill(state.mode),
   pill(state.run.version || "unversioned"),
   pill(board.release_profile || "profile n/a"),
@@ -824,6 +904,39 @@ const actionCards = (board.recommended_actions || []).map(item => `<div class="a
   <b>${{fmt(item.action)}}</b>
   <div class="note">${{fmt(item.reason)}}</div>
 </div>`).join("");
+
+const topCustomerActions = (board.recommended_actions || []).slice(0, 4);
+const customerActionBullets = topCustomerActions.map(item => `<li><b>${{fmt(item.action)}}</b> <span>${{fmt(item.reason)}}</span></li>`).join("");
+const customerOverviewHtml = `
+<section class="panel wide">
+  <h2>Customer Overview</h2>
+  <div class="overview-grid">
+    <div class="status-card">
+      <div>${{pill(out.status || board.human_review_readiness || board.status)}} ${{pill(board.release_profile || "profile n/a")}}</div>
+      <div class="status-title">${{fmt(board.human_review_readiness || out.status || "Review needed")}}</div>
+      <p class="status-copy">This page translates the validation run into readiness, blockers, and next customer actions. Detailed skill internals are available in developer view.</p>
+      <ul class="customer-actions">${{customerActionBullets || "<li>No customer action is required for this run.</li>"}}</ul>
+    </div>
+    <div class="view-note">
+      <b>What customers should use</b><br>
+      Workflow status, evidence summary, release readiness, and safety approval. The same validation still runs underneath.
+      <br><br><b>Need internals?</b><br>
+      Regenerate this hub with <code>--audience developer</code> to inspect skill IDs, journals, guardrails, manifests, and raw artifacts.
+    </div>
+  </div>
+</section>`;
+
+const developerOverviewHtml = `
+<section class="panel wide">
+  <h2>Developer Audit View</h2>
+  <div class="developer-intro">
+    <div class="status-card"><div>${{pill(board.status || "pending")}}</div><div class="status-title">Harness status</div><p class="status-copy">Inspect skill-level validation, evidence files, guardrails, and release blockers.</p></div>
+    <div class="status-card"><div>${{pill(board.offline_validation_status || "pending")}}</div><div class="status-title">Offline validation</div><p class="status-copy">Use this view to debug manifests, thresholds, command adapters, and score generation.</p></div>
+    <div class="status-card"><div>${{pill(board.hardware_approval_status || "not_requested", "human")}}</div><div class="status-title">Safety gate</div><p class="status-copy">Hardware approval remains explicit even for developers; <code>safe_to_autorun_robot</code> stays false.</p></div>
+  </div>
+</section>`;
+
+const audienceOverviewHtml = isDeveloper ? developerOverviewHtml : customerOverviewHtml;
 
 const actionHtml = `
 <section class="panel wide">
@@ -852,16 +965,35 @@ const readinessHtml = `
   <div class="action-grid">${{readinessCards || "<span class='note'>No data-readiness alerts for this run.</span>"}}</div>
 </section>`;
 
+const flowSteps = state.workflow || [];
+const workflowNode = (s, index) => `
+  <article class="flow-node">
+    <div class="flow-status-row">
+      <span class="flow-index">${{String(s.index || index + 1).padStart(2, "0")}}</span>
+      <span class="flow-lane">${{fmt(s.lane)}}</span>
+    </div>
+    <div class="flow-title">${{fmt(s.stage)}}</div>
+    <div class="flow-status-row">${{rolePill(s.owner)}} ${{pill(s.status)}}</div>
+    <div class="flow-summary">${{fmt(s.summary)}}</div>
+    <div class="flow-artifact"><code>${{fmt(s.artifact)}}</code></div>
+  </article>`;
+
 const workflowHtml = `
-<section class="panel wide">
-  <h2>Pipeline Flow</h2>
-  <div class="workflow">
-    ${{(state.workflow || []).map(s => `<div class="stage">
-      <div class="stage-title">${{fmt(s.stage)}}</div>
-      <div>${{rolePill(s.owner)}}</div>
-      <div style="margin-top:8px">${{pill(s.status)}}</div>
-      <div class="note" style="margin-top:8px"><code>${{fmt(s.artifact)}}</code></div>
-    </div>`).join("")}}
+<section class="panel wide flow-panel">
+  <div class="flow-head">
+    <div>
+      <h2>Workflow Diagram</h2>
+      <p class="flow-subhead">The run moves from real evidence, through bounded agent proposals and deterministic validation, into release review. Hardware approval stays separate.</p>
+    </div>
+    ${{pill("safe_to_autorun_robot=false", "human")}}
+  </div>
+  <div class="flow-diagram">
+    ${{flowSteps.map(workflowNode).join("")}}
+  </div>
+  <div class="flow-footer">
+    <div class="flow-note"><b>Agentic lane</b><span class="note">The LLM orders known skills and proposes candidates, but it cannot approve its own result.</span></div>
+    <div class="flow-note"><b>Evidence lane</b><span class="note">The harness writes metrics, scorecards, traces, and release blockers for every run.</span></div>
+    <div class="flow-note"><b>Safety lane</b><span class="note">Human review is the only path to supervised physical robot execution.</span></div>
   </div>
 </section>`;
 
@@ -948,6 +1080,15 @@ const deterministicSkills = (board.deterministic_validation_skills || []).map(ro
   <td>${{fmt(row.user_action)}}</td>
 </tr>`).join("");
 
+const developerSubchecks = (board.developer_subchecks || []).map(row => `<tr>
+  <td><code>${{row.skill_id}}</code></td>
+  <td>${{pill(row.status)}}</td>
+  <td>${{pill(row.action_level)}}<div class="note">${{row.release_blocking ? "release-blocking" : "supporting"}}</div></td>
+  <td>${{num(row.quality_score)}}<div class="note">${{fmt(row.quality_meaning)}}</div></td>
+  <td>${{num(row.confidence)}}<div class="note">${{fmt(row.confidence_meaning)}}</div></td>
+  <td>${{fmt(row.quality_rationale)}}</td>
+</tr>`).join("");
+
 const nondetHtml = `
 <section class="panel wide">
   <h2>Non-Deterministic Coverage</h2>
@@ -963,24 +1104,44 @@ const deterministicHtml = `
   <div class="table-wrap"><table><thead><tr><th>Skill</th><th>Status</th><th>Action level</th><th>Quality</th><th>Confidence</th><th>Why assigned</th><th>Pipeline action</th><th>User action</th></tr></thead><tbody>${{deterministicSkills}}</tbody></table></div>
 </section>`;
 
+const subcheckHtml = `
+<section class="panel wide">
+  <h2>Developer Subchecks</h2>
+  <p class="note">These are the former 16-skill internals, now nested under the 7 customer-facing skills.</p>
+  <div class="table-wrap"><table><thead><tr><th>Subcheck</th><th>Status</th><th>Action level</th><th>Quality</th><th>Confidence</th><th>Rationale</th></tr></thead><tbody>${{developerSubchecks || "<tr><td colspan='6' class='note'>No subcheck detail was recorded for this run.</td></tr>"}}</tbody></table></div>
+</section>`;
+
 const journal = (state.journal || []).slice(-9).map(row => `<div class="journal-item">
   <b>#${{fmt(row.step)}} ${{fmt(row.skill_id || row.action)}}</b>
   <div style="margin-top:6px">${{pill(row.status)}}</div>
   <div class="note" style="margin-top:6px">${{fmt(row.rationale).slice(0, 120)}}</div>
 </div>`).join("");
 
+const journalHtml = `<section class="panel wide"><h2>LLM Orchestrator Journal</h2><div class="journal">${{journal || "<span class='note'>No LLM journal found for this run.</span>"}}</div></section>`;
+const scoreMeaningHtml = `<section class="panel wide"><h2>Score Meaning</h2><p class="note">${{fmt(score.score_meaning?.release_gap_score)}} ${{fmt(score.score_meaning?.target_source)}} Formula: ${{fmt(score.score_meaning?.formula)}}</p></section>`;
+const developerAuditHtml = [nondetHtml, deterministicHtml, subcheckHtml, journalHtml, scoreMeaningHtml].join("");
+const customerAuditPointerHtml = `
+<section class="panel wide">
+  <div class="audit-note">
+    <div>
+      <h2>Technical Audit</h2>
+      <p class="note">Hidden from the customer path. Re-run with <code>--audience developer</code> to expand skill validation tables, guardrail decisions, and the LLM journal.</p>
+    </div>
+    ${{pill("developer view available", "gate")}}
+  </div>
+</section>`;
+const technicalAuditHtml = isDeveloper ? developerAuditHtml : customerAuditPointerHtml;
+
 document.getElementById("app").innerHTML = [
+  workflowHtml,
+  audienceOverviewHtml,
   metricHtml,
   actionHtml,
   readinessHtml,
-  workflowHtml,
   `<div class="lane-grid">${{charHtml}}${{releaseHtml}}</div>`,
   splitHtml,
   recordHtml,
-  nondetHtml,
-  deterministicHtml,
-  `<section class="panel wide"><h2>LLM Orchestrator Journal</h2><div class="journal">${{journal || "<span class='note'>No LLM journal found for this run.</span>"}}</div></section>`,
-  `<section class="panel wide"><h2>Score Meaning</h2><p class="note">${{fmt(score.score_meaning?.release_gap_score)}} ${{fmt(score.score_meaning?.target_source)}} Formula: ${{fmt(score.score_meaning?.formula)}}</p></section>`
+  technicalAuditHtml
 ].join("");
 </script>
 </body>
