@@ -16,6 +16,11 @@ DEFAULTS: dict[str, Any] = {
         "video_length": 800,
         "video_interval": 5000,
         "observations": ["joint_pos", "joint_vel", "gear_shaft_pos", "gear_shaft_quat"],
+        "rollout_command": [],
+        "rollout_metrics_path": "",
+        "rollout_timeout_s": 1800,
+        "rollout_min_episodes": 20,
+        "rollout_success_rate_floor": 0.7,
     },
     "robot": {
         "arm": "ur10e",
@@ -46,6 +51,26 @@ DEFAULTS: dict[str, Any] = {
         "min_real_episodes_for_gate": 3,
         "max_recommended_delay_steps": 8,
         "precision_task": True,
+    },
+    "policy": {
+        "artifact_dir": "golden/sample_inputs/policy_artifacts",
+        "allow_sample_artifacts_for_smoke": True,
+        "allow_policy_artifact_waiver": False,
+        "policy_artifact_waiver_reason": "",
+    },
+    "release": {
+        "profile": "smoke",
+        "require_physics_sysid_for_human_review": None,
+        "allow_sysid_waiver": False,
+        "sysid_waiver_reason": "",
+        "require_heldout_session_for_human_review": None,
+        "heldout_min_episodes": 1,
+        "allow_heldout_waiver": False,
+        "heldout_waiver_reason": "",
+        "require_isaaclab_rollout_for_human_review": None,
+        "allow_isaaclab_rollout_waiver": False,
+        "isaaclab_rollout_waiver_reason": "",
+        "require_user_policy_artifacts_for_human_review": None,
     },
     "llm_orchestrator": {
         "provider": "scripted",
@@ -105,6 +130,8 @@ class PipelineConfig:
     perception: dict[str, Any] = field(default_factory=dict)
     isaac_ros: dict[str, Any] = field(default_factory=dict)
     agent: dict[str, Any] = field(default_factory=dict)
+    policy: dict[str, Any] = field(default_factory=dict)
+    release: dict[str, Any] = field(default_factory=dict)
     llm_orchestrator: dict[str, Any] = field(default_factory=dict)
     sysid: dict[str, Any] = field(default_factory=dict)
     safety: dict[str, Any] = field(default_factory=dict)
@@ -116,6 +143,8 @@ class PipelineConfig:
             "perception": self.perception,
             "isaac_ros": self.isaac_ros,
             "agent": self.agent,
+            "policy": self.policy,
+            "release": self.release,
             "llm_orchestrator": self.llm_orchestrator,
             "sysid": self.sysid,
             "safety": self.safety,
@@ -131,6 +160,8 @@ def load_config(path: str | Path) -> PipelineConfig:
         perception=dict(merged["perception"]),
         isaac_ros=dict(merged["isaac_ros"]),
         agent=dict(merged["agent"]),
+        policy=dict(merged["policy"]),
+        release=dict(merged["release"]),
         llm_orchestrator=dict(merged["llm_orchestrator"]),
         sysid=dict(merged["sysid"]),
         safety=dict(merged["safety"]),

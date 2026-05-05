@@ -113,8 +113,10 @@ Current default SysID is log-based and implemented in
 reset scatter, contact summary, and bounded recommendations.
 
 IsaacLab-Newton is represented by the portable `newton_sysid` skill. It is
-skipped by default, runs only when `config.sysid.newton_command` is configured,
-and can be made mandatory with `config.sysid.require_newton=true`.
+reported as `evidence_missing` by default, runs when `config.sysid.newton_root`
+or `config.sysid.newton_command` is configured, and can be made mandatory for
+human review with `release.profile="release_candidate"` or
+`config.sysid.require_newton=true`.
 
 ## LLM-Orchestrated Evaluation
 

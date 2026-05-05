@@ -10,6 +10,7 @@ from .config import load_config
 from .dataset import load_records
 from .llm_orchestrator import run_llm_orchestrated_loop
 from .real_data import ensure_aligned_dataset
+from .release_policy import release_profile, release_requires, release_waiver
 from .sysid import estimate_gap
 
 
@@ -54,12 +55,15 @@ def run_evaluation_loop(
     )
     scoreboard = orchestrator["scoreboard"]
     measurements = evaluator_measures(scoreboard, threshold_policy, out)
-    critique = critic_challenges(scoreboard, threshold_policy, out)
-    decision = release_gate_decides(scoreboard, critique, out)
+    critique = critic_challenges(scoreboard, threshold_policy, config, out)
+    decision = release_gate_decides(scoreboard, critique, config, out)
     human_gate = human_approves_hardware(config, include_real, out)
 
     trace = {
         "threshold_policy": threshold_policy,
+        "release_profile": release_profile(config),
+        "offline_validation_status": scoreboard.get("offline_validation_status", scoreboard["status"]),
+        "human_review_readiness": scoreboard.get("human_review_readiness", "not_ready"),
         "agent_proposes": proposal,
         "llm_orchestrator": {
             key: value
@@ -125,7 +129,12 @@ def evaluator_measures(scoreboard: dict[str, Any], threshold_policy: dict[str, A
     return measurements
 
 
-def critic_challenges(scoreboard: dict[str, Any], threshold_policy: dict[str, Any], out: Path) -> dict[str, Any]:
+def critic_challenges(
+    scoreboard: dict[str, Any],
+    threshold_policy: dict[str, Any],
+    config: Any,
+    out: Path,
+) -> dict[str, Any]:
     challenges = []
     observations = []
     skills = scoreboard["skills"]
@@ -134,14 +143,61 @@ def critic_challenges(scoreboard: dict[str, Any], threshold_policy: dict[str, An
     for skill_id, result in skills.items():
         if result["status"] == "fail":
             challenges.append(f"{skill_id} failed: {result['blocking_failures']}")
-        if result["status"] == "skip":
-            observations.append(f"{skill_id} skipped: {result.get('warnings', [])}")
+        if result["status"] in {"skip", "not_applicable", "not_approved", "evidence_missing"}:
+            observations.append(f"{skill_id} status {result['status']}: {result.get('warnings', [])}")
+        if result["status"] == "evidence_missing" and result.get("release_blocking"):
+            challenges.append(f"{skill_id} is missing release-blocking evidence")
         if result["status"] == "pass" and float(result["confidence"]) < confidence_floor:
             challenges.append(
                 f"{skill_id} confidence {result['confidence']} is below auto-promotion floor {confidence_floor}"
             )
         for warning in result.get("warnings", []):
             observations.append(f"{skill_id} warning: {warning}")
+
+    data_quality = skills.get("real_data_quality_gate", {})
+    data_metrics = data_quality.get("metrics", {})
+    success_coverage = float(data_metrics.get("success_label_coverage", 0.0) or 0.0)
+    contact_coverage = float(data_metrics.get("contact_coverage", 0.0) or 0.0)
+    joint_velocity_coverage = float(data_metrics.get("joint_velocity_coverage", 0.0) or 0.0)
+    strict_release = release_profile(config) != "smoke"
+    if success_coverage < float(threshold_policy["data_quality_thresholds"]["min_success_label_coverage"]):
+        if strict_release:
+            challenges.append("success labels are too sparse for confident release scoring")
+        else:
+            observations.append("success labels are sparse; smoke profile keeps this as an observation")
+    if release_requires(config, "require_heldout_session_for_human_review"):
+        heldout_episodes = int(data_metrics.get("heldout_episodes", 0) or 0)
+        heldout_min = int(config.release.get("heldout_min_episodes", 1))
+        waiver = release_waiver(config, "allow_heldout_waiver", "heldout_waiver_reason")
+        if heldout_episodes < heldout_min and not waiver["allowed"]:
+            challenges.append("no sufficient held-out session evidence is present")
+    if contact_coverage < float(threshold_policy["data_quality_thresholds"]["min_contact_coverage"]):
+        observations.append("contact coverage is sparse; contact/action-scale conclusions are weaker")
+    if joint_velocity_coverage < 0.5:
+        observations.append("joint velocity coverage is sparse; delay/stiction conclusions are weaker")
+
+    newton = skills.get("newton_sysid", {})
+    pace = skills.get("pace_sysid", {})
+    physics_passed = newton.get("status") == "pass" or pace.get("status") == "pass"
+    if release_requires(config, "require_physics_sysid_for_human_review"):
+        waiver = release_waiver(config, "allow_sysid_waiver", "sysid_waiver_reason")
+        if not physics_passed and not waiver["allowed"]:
+            challenges.append("release-candidate profile requires Newton or PACE SysID evidence")
+    elif not physics_passed:
+        observations.append("no Newton/PACE physics SysID backend produced fitted parameters")
+
+    policy = skills.get("policy_artifact_audit", {})
+    if policy.get("metrics", {}).get("using_sample_artifacts"):
+        if release_requires(config, "require_user_policy_artifacts_for_human_review"):
+            challenges.append("policy artifact audit is still using sample fixtures")
+        else:
+            observations.append("policy artifact audit is using sample fixtures")
+
+    rollout = skills.get("isaaclab_rollout_regression", {})
+    if release_requires(config, "require_isaaclab_rollout_for_human_review"):
+        waiver = release_waiver(config, "allow_isaaclab_rollout_waiver", "isaaclab_rollout_waiver_reason")
+        if rollout.get("status") != "pass" and not waiver["allowed"]:
+            challenges.append("true Isaac Lab rollout regression evidence is missing")
 
     sim_eval = skills.get("sim_eval_regression", {})
     success_delta = float(sim_eval.get("metrics", {}).get("success_delta", 0.0))
@@ -150,6 +206,8 @@ def critic_challenges(scoreboard: dict[str, Any], threshold_policy: dict[str, An
             f"candidate success delta {success_delta} is below required "
             f"{threshold_policy['regression_thresholds']['min_success_delta']}"
         )
+    if strict_release and success_delta > 0 and success_coverage < float(threshold_policy["data_quality_thresholds"]["min_success_label_coverage"]):
+        challenges.append("candidate success improvement is contradicted by sparse success labels")
 
     critique = {
         "role": "Critic",
@@ -163,17 +221,32 @@ def critic_challenges(scoreboard: dict[str, Any], threshold_policy: dict[str, An
     return critique
 
 
-def release_gate_decides(scoreboard: dict[str, Any], critique: dict[str, Any], out: Path) -> dict[str, Any]:
+def release_gate_decides(scoreboard: dict[str, Any], critique: dict[str, Any], config: Any, out: Path) -> dict[str, Any]:
     blocking = list(scoreboard.get("blocking_failures", []))
     critic_needs_review = critique["status"] != "pass"
     if critic_needs_review:
         blocking.append({"skill_id": "critic_agent", "failures": critique["challenges"]})
 
     status = "promote_to_human_review" if not blocking else "blocked"
+    profile = release_profile(config)
+    strict_profile = profile != "smoke"
+    readiness = (
+        "ready"
+        if status == "promote_to_human_review" and strict_profile
+        else "smoke_review_only"
+        if status == "promote_to_human_review"
+        else "not_ready"
+    )
     decision = {
         "role": "Release Gate",
         "job": "Apply pass/fail policy across all release-blocking skills and critic findings.",
         "status": status,
+        "release_profile": profile,
+        "review_scope": "release_candidate_review" if strict_profile else "smoke_offline_review",
+        "offline_validation_status": scoreboard.get("offline_validation_status", scoreboard["status"]),
+        "human_review_readiness": readiness,
+        "ready_for_human_review": status == "promote_to_human_review",
+        "release_candidate_ready": bool(status == "promote_to_human_review" and strict_profile),
         "blocking_failures": blocking,
         "safe_to_autorun_robot": False,
         "required_human_approvals": [
@@ -209,6 +282,10 @@ def human_approves_hardware(config: Any, include_real: bool, out: Path) -> dict[
 def write_trace_markdown(trace: dict[str, Any]) -> str:
     sections = [
         "# Evaluation Trace",
+        "",
+        f"- Release profile: {trace['release_profile']}",
+        f"- Offline validation: {trace['offline_validation_status']}",
+        f"- Human review readiness: {trace['human_review_readiness']}",
         "",
         "## Agent Proposes",
         "",

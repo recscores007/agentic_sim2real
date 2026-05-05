@@ -44,6 +44,8 @@ def evaluate_real_data_quality(
         warnings.append("episode success labels are sparse; regression confidence will be limited")
     if metrics["joint_velocity_coverage"] < 0.5:
         warnings.append("joint velocity coverage is sparse; delay/stiction estimates may be less confident")
+    if metrics["heldout_episodes"] == 0:
+        warnings.append("no held-out episodes are marked; release-candidate promotion should use a held-out session")
 
     session_report: dict[str, Any] | None = None
     if source.is_dir():
@@ -95,6 +97,10 @@ def _record_metrics(records: list[Record]) -> dict[str, Any]:
         "records": total,
         "episodes": len(by_episode),
         "episode_ids": sorted(by_episode),
+        "split_counts": _split_counts(records),
+        "session_ids": _session_ids(records),
+        "heldout_episodes": _heldout_episodes(records),
+        "heldout_session_count": _heldout_session_count(records),
         "action_dims": sorted({len(record.action) for record in records}),
         "joint_dims": sorted({len(record.joint_state) for record in records}),
         "joint_velocity_coverage": _ratio(joint_velocity_count, total),
@@ -121,3 +127,47 @@ def _ratio(count: int, total: int) -> float:
     if total <= 0:
         return 0.0
     return round(count / total, 3)
+
+
+def _split_counts(records: list[Record]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in records:
+        split = _split_name(record)
+        counts[split] = counts.get(split, 0) + 1
+    return counts
+
+
+def _session_ids(records: list[Record]) -> list[str]:
+    sessions = {_session_id(record) for record in records}
+    return sorted(session for session in sessions if session)
+
+
+def _heldout_episodes(records: list[Record]) -> int:
+    return len({record.episode_index for record in records if _is_heldout(record)})
+
+
+def _heldout_session_count(records: list[Record]) -> int:
+    return len({_session_id(record) for record in records if _is_heldout(record) and _session_id(record)})
+
+
+def _split_name(record: Record) -> str:
+    raw = record.raw or {}
+    value = raw.get("split") or raw.get("dataset_split") or raw.get("eval_split") or raw.get("partition")
+    return str(value).strip().lower() if value not in (None, "") else "unmarked"
+
+
+def _session_id(record: Record) -> str:
+    raw = record.raw or {}
+    value = raw.get("session_id") or raw.get("session") or raw.get("session_name") or raw.get("run_id")
+    return str(value).strip() if value not in (None, "") else ""
+
+
+def _is_heldout(record: Record) -> bool:
+    split = _split_name(record)
+    raw = record.raw or {}
+    heldout_flag = raw.get("heldout") or raw.get("is_holdout") or raw.get("holdout")
+    if isinstance(heldout_flag, bool):
+        return heldout_flag
+    if heldout_flag not in (None, ""):
+        return str(heldout_flag).strip().lower() in {"1", "true", "yes", "heldout", "holdout"}
+    return split in {"heldout", "holdout", "test", "validation", "val"}

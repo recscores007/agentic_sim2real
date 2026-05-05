@@ -15,10 +15,14 @@ from .newton_bridge import run_newton_bridge
 from .pace_bridge import run_pace_bridge
 from .preflight import run_preflight
 from .real_data import ensure_aligned_dataset
+from .release_policy import is_sample_policy_artifact_path, release_profile, release_requires, release_waiver
 from .safety import require_real_robot_gate
 from .sysid import estimate_gap
 
 
+ALLOWED_SKILL_STATUSES = {"pass", "fail", "skip", "not_applicable", "not_approved", "evidence_missing"}
+BLOCKING_SKILL_STATUSES = {"fail", "evidence_missing"}
+NON_SCORING_STATUSES = {"skip", "not_applicable", "not_approved", "evidence_missing"}
 REQUIRED_MANIFEST_FIELDS = {
     "id",
     "name",
@@ -260,14 +264,24 @@ def run_skill_step(
     skill_out.mkdir(parents=True, exist_ok=True)
 
     if manifest.real_robot and not ctx.include_real:
+        evidence = _write_json(
+            skill_out / f"{skill_id}.json",
+            {
+                "status": "not_approved",
+                "reason": "real robot skill was not included because human hardware approval is required",
+                "safe_to_autorun_robot": False,
+            },
+        )
         result = SkillResult(
             skill_id=skill_id,
-            status="skip",
-            quality_score=1.0,
+            status="not_approved",
+            quality_score=0.0,
             confidence=1.0,
-            warnings=["real robot skill skipped by default harness; run with --include-real after human approval"],
+            warnings=["real robot skill is not approved; rerun with --include-real only after human approval"],
+            evidence_files=[evidence],
             human_required=manifest.human_required,
             release_blocking=manifest.release_blocking,
+            metrics={"safe_to_autorun_robot": False},
         )
     else:
         result = _run_one(manifest, ctx, skill_out, previous_results)
@@ -285,7 +299,7 @@ def write_harness_artifacts(
     results: dict[str, SkillResult],
     require_all_release_blocking: bool = False,
 ) -> dict[str, Any]:
-    scoreboard = _scoreboard(results, manifests, require_all_release_blocking=require_all_release_blocking)
+    scoreboard = _scoreboard(ctx.config, results, manifests, require_all_release_blocking=require_all_release_blocking)
     (ctx.out_dir / "scoreboard.json").write_text(json.dumps(scoreboard, indent=2, sort_keys=True) + "\n")
     (ctx.out_dir / "release_candidate.json").write_text(
         json.dumps(_release_candidate(results, scoreboard), indent=2, sort_keys=True) + "\n"
@@ -430,7 +444,7 @@ def _run_command_skill(
 
 def _skill_result_from_payload(manifest: SkillManifest, payload: dict[str, Any], skill_out: Path) -> SkillResult:
     status = str(payload.get("status", "fail"))
-    if status not in {"pass", "fail", "skip"}:
+    if status not in ALLOWED_SKILL_STATUSES:
         status = "fail"
         failures = [f"invalid external skill status: {payload.get('status')}"]
     else:
@@ -496,24 +510,46 @@ def _topological_order(manifests: dict[str, SkillManifest]) -> list[str]:
 
 
 def _scoreboard(
+    config: PipelineConfig,
     results: dict[str, SkillResult],
     manifests: dict[str, SkillManifest],
     require_all_release_blocking: bool = False,
 ) -> dict[str, Any]:
     blocking_failures = []
     scores = []
+    status_counts: dict[str, int] = {}
     for skill_id, result in results.items():
+        status_counts[result.status] = status_counts.get(result.status, 0) + 1
         if result.status == "pass":
             scores.append(result.quality_score)
-        if manifests[skill_id].release_blocking and result.status == "fail":
+        if manifests[skill_id].release_blocking and result.status in BLOCKING_SKILL_STATUSES:
             blocking_failures.append({"skill_id": skill_id, "failures": result.blocking_failures})
     if require_all_release_blocking:
         for skill_id, manifest in sorted(manifests.items()):
             if manifest.release_blocking and skill_id not in results:
                 blocking_failures.append({"skill_id": skill_id, "failures": ["release-blocking skill did not run"]})
+    release_gate = results.get("release_candidate_gate")
+    real_gate = results.get("real_robot_gate")
+    profile = release_profile(config)
+    strict_profile = profile != "smoke"
+    ready_for_human_review = bool(
+        not blocking_failures
+        and release_gate
+        and release_gate.status == "pass"
+    )
+    readiness = "ready" if ready_for_human_review and strict_profile else "smoke_review_only" if ready_for_human_review else "not_ready"
     quality = sum(scores) / len(scores) if scores else 0.0
     return {
         "status": "pass" if not blocking_failures else "fail",
+        "release_profile": profile,
+        "review_scope": "release_candidate_review" if strict_profile else "smoke_offline_review",
+        "offline_validation_status": "pass" if not blocking_failures else "fail",
+        "human_review_readiness": readiness,
+        "ready_for_human_review": ready_for_human_review,
+        "release_candidate_ready": bool(ready_for_human_review and strict_profile),
+        "hardware_approval_status": real_gate.status if real_gate else "not_requested",
+        "safe_to_autorun_robot": False,
+        "status_counts": status_counts,
         "quality_score": round(quality, 3),
         "blocking_failures": blocking_failures,
         "skills": {skill_id: result.to_dict() for skill_id, result in results.items()},
@@ -524,6 +560,8 @@ def _release_candidate(results: dict[str, SkillResult], scoreboard: dict[str, An
     return {
         "status": "promote_to_human_review" if scoreboard["status"] == "pass" else "blocked",
         "safe_to_autorun_robot": False,
+        "offline_validation_status": scoreboard.get("offline_validation_status", scoreboard["status"]),
+        "human_review_readiness": scoreboard.get("human_review_readiness", "not_ready"),
         "quality_score": scoreboard["quality_score"],
         "required_human_approvals": [
             skill_id for skill_id, result in results.items() if result.human_required
@@ -543,6 +581,13 @@ def _release_candidate(results: dict[str, SkillResult], scoreboard: dict[str, An
 def _write_json(path: Path, payload: dict[str, Any]) -> str:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return str(path)
+
+
+def _optional_metric(metrics: dict[str, Any], key: str) -> float | None:
+    value = metrics.get(key)
+    if value in (None, ""):
+        return None
+    return float(value)
 
 
 def _impl_env_preflight(
@@ -622,20 +667,45 @@ def _impl_policy_artifact_audit(
     skill_out: Path,
     previous: dict[str, SkillResult],
 ) -> SkillResult:
-    artifact_dir = ctx.root / "golden" / "sample_inputs" / "policy_artifacts"
+    artifact_cfg = str(ctx.config.policy.get("artifact_dir", "golden/sample_inputs/policy_artifacts")).strip()
+    artifact_dir = Path(artifact_cfg).expanduser()
+    if not artifact_dir.is_absolute():
+        artifact_dir = ctx.root / artifact_dir
     required = ["agent.yaml", "env.yaml", "checkpoint.meta.json"]
     present = {name: (artifact_dir / name).exists() for name in required}
     failures = [f"missing policy artifact sample: {name}" for name, ok in present.items() if not ok]
-    evidence = _write_json(skill_out / "policy_artifact_audit.json", {"artifact_dir": str(artifact_dir), "present": present})
+    using_sample = is_sample_policy_artifact_path(ctx.config, str(artifact_dir))
+    warnings = []
+    status = "fail" if failures else "pass"
+    if using_sample:
+        warnings.append("sample policy artifacts are being used; configure policy.artifact_dir for a real release")
+    if release_requires(ctx.config, "require_user_policy_artifacts_for_human_review") and using_sample:
+        waiver_allowed = bool(ctx.config.policy.get("allow_policy_artifact_waiver", False))
+        waiver_reason = str(ctx.config.policy.get("policy_artifact_waiver_reason", "")).strip()
+        if waiver_allowed and waiver_reason:
+            warnings.append(f"user policy artifact requirement waived: {waiver_reason}")
+        else:
+            status = "evidence_missing"
+            failures.append("release-candidate profile requires user-provided policy artifacts, not sample fixtures")
+    evidence = _write_json(
+        skill_out / "policy_artifact_audit.json",
+        {
+            "artifact_dir": str(artifact_dir),
+            "present": present,
+            "using_sample_artifacts": using_sample,
+            "release_profile": release_profile(ctx.config),
+        },
+    )
     score = sum(1 for ok in present.values() if ok) / len(present)
     return SkillResult(
         skill_id=manifest.skill_id,
-        status="fail" if failures else "pass",
+        status=status,
         quality_score=score,
         confidence=0.8,
         blocking_failures=failures,
+        warnings=warnings,
         evidence_files=[evidence],
-        metrics={"artifact_completeness": round(score, 3)},
+        metrics={"artifact_completeness": round(score, 3), "using_sample_artifacts": using_sample},
     )
 
 
@@ -780,7 +850,7 @@ def _impl_newton_sysid(
         evidence = _write_json(
             skill_out / "newton_sysid.json",
             {
-                "status": "skip",
+                "status": "evidence_missing",
                 "reason": "IsaacLab-Newton is not enabled; local log-based SysID remains the active fallback.",
                 "fallback_skill": "sysid_step_response",
                 "input_file": str(input_path),
@@ -788,8 +858,8 @@ def _impl_newton_sysid(
         )
         return SkillResult(
             skill_id=manifest.skill_id,
-            status="skip",
-            quality_score=1.0,
+            status="evidence_missing",
+            quality_score=0.0,
             confidence=1.0,
             warnings=["Newton SysID skipped; set sysid.newton_enabled plus sysid.newton_root or sysid.newton_command to enable it"],
             evidence_files=[evidence],
@@ -883,8 +953,8 @@ def _sysid_unavailable_result(
 ) -> SkillResult:
     return SkillResult(
         skill_id=skill_id,
-        status="fail" if required else "skip",
-        quality_score=0.0 if required else 1.0,
+        status="fail" if required else "evidence_missing",
+        quality_score=0.0,
         confidence=1.0,
         blocking_failures=[message] if required else [],
         warnings=[] if required else [message],
@@ -905,23 +975,23 @@ def _sysid_backend_result_from_payload(
 ) -> SkillResult:
     confidence = float(payload.get("confidence", payload.get("metrics", {}).get("confidence", 0.0)))
     payload_status = str(payload.get("status", "pass")).lower()
-    if payload_status not in {"pass", "fail", "skip"}:
+    if payload_status not in ALLOWED_SKILL_STATUSES:
         payload_status = "pass"
 
     failures = [str(item) for item in payload.get("blocking_failures", [])]
     if payload_status == "fail" and not failures and payload.get("reason"):
         failures.append(str(payload["reason"]))
-    if required and payload_status == "skip":
+    if required and payload_status in {"skip", "evidence_missing", "not_applicable"}:
         failures.append(f"{backend_label} is required but the payload skipped")
-    if payload_status != "skip":
+    if payload_status not in {"skip", "evidence_missing", "not_applicable"}:
         min_confidence = float(sysid_cfg.get(min_confidence_key, 0.6))
         if confidence < min_confidence:
             failures.append(f"{backend_label} confidence {confidence:.3f} below required {min_confidence:.3f}")
 
     if failures or payload_status == "fail":
         status = "fail"
-    elif payload_status == "skip":
-        status = "skip"
+    elif payload_status in {"skip", "evidence_missing", "not_applicable"}:
+        status = "evidence_missing" if payload_status != "not_applicable" else "not_applicable"
     else:
         status = "pass"
 
@@ -957,15 +1027,15 @@ def _impl_pace_sysid(
         evidence = _write_json(
             skill_out / "pace_sysid.json",
             {
-                "status": "skip",
+                "status": "not_applicable",
                 "reason": "Newton SysID passed and is preferred ahead of PACE.",
                 "fallback_skill": "newton_sysid",
             },
         )
         return SkillResult(
             skill_id=manifest.skill_id,
-            status="skip",
-            quality_score=1.0,
+            status="not_applicable",
+            quality_score=0.0,
             confidence=1.0,
             warnings=["PACE backup skipped because Newton SysID passed"],
             evidence_files=[evidence],
@@ -991,12 +1061,12 @@ def _impl_pace_sysid(
         reason = "PACE backup SysID is not enabled; local log-based SysID remains the fallback when Newton is unavailable."
         evidence = _write_json(
             skill_out / "pace_sysid.json",
-            {"status": "skip", "reason": reason, "fallback_skill": "sysid_step_response", "input_file": str(input_path)},
+            {"status": "evidence_missing", "reason": reason, "fallback_skill": "sysid_step_response", "input_file": str(input_path)},
         )
         return SkillResult(
             skill_id=manifest.skill_id,
-            status="skip",
-            quality_score=1.0,
+            status="evidence_missing",
+            quality_score=0.0,
             confidence=1.0,
             warnings=["PACE backup skipped; set sysid.pace_enabled plus sysid.pace_root or sysid.pace_command to enable it"],
             evidence_files=[evidence],
@@ -1144,6 +1214,164 @@ def _impl_sim_eval_regression(
     )
 
 
+def _impl_isaaclab_rollout_regression(
+    manifest: SkillManifest,
+    ctx: HarnessContext,
+    skill_out: Path,
+    previous: dict[str, SkillResult],
+) -> SkillResult:
+    required = release_requires(ctx.config, "require_isaaclab_rollout_for_human_review")
+    waiver = release_waiver(ctx.config, "allow_isaaclab_rollout_waiver", "isaaclab_rollout_waiver_reason")
+    metrics_path_cfg = str(ctx.config.isaac_lab.get("rollout_metrics_path", "")).strip()
+    command = [str(item) for item in ctx.config.isaac_lab.get("rollout_command", [])]
+    input_path = skill_out / "isaaclab_rollout_input.json"
+    output_path = skill_out / "isaaclab_rollout_output.json"
+    input_payload = {
+        "dataset": str(ctx.dataset),
+        "config": ctx.config.merged(),
+        "root": str(ctx.root),
+        "skill_out": str(skill_out),
+        "expected_output_json": str(output_path),
+        "previous_results": {skill_id: result.to_dict() for skill_id, result in previous.items()},
+    }
+    input_path.write_text(json.dumps(input_payload, indent=2, sort_keys=True) + "\n")
+
+    payload: dict[str, Any] | None = None
+    evidence_files = [str(input_path)]
+    source = "not_configured"
+    failures: list[str] = []
+    warnings: list[str] = []
+
+    if metrics_path_cfg:
+        metrics_path = Path(metrics_path_cfg).expanduser()
+        if not metrics_path.is_absolute():
+            metrics_path = ctx.root / metrics_path
+        if metrics_path.exists():
+            payload = json.loads(metrics_path.read_text())
+            source = "metrics_file"
+            evidence_files.append(str(metrics_path))
+        else:
+            failures.append(f"configured Isaac Lab rollout metrics file does not exist: {metrics_path}")
+    elif command:
+        formatted = [item.format(input=input_path, output=output_path, dataset=ctx.dataset, root=ctx.root) for item in command]
+        env = os.environ.copy()
+        env.update(
+            {
+                "AGENTIC_SIM2REAL_ROLLOUT_INPUT_JSON": str(input_path),
+                "AGENTIC_SIM2REAL_ROLLOUT_OUTPUT_JSON": str(output_path),
+                "AGENTIC_SIM2REAL_DATASET": str(ctx.dataset),
+            }
+        )
+        try:
+            completed = subprocess.run(
+                formatted,
+                cwd=ctx.root,
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=float(ctx.config.isaac_lab.get("rollout_timeout_s", 1800)),
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            failures.append(f"Isaac Lab rollout command could not complete: {exc}")
+            completed = None
+        log = _write_json(
+            skill_out / "isaaclab_rollout_command_log.json",
+            {
+                "command": formatted,
+                "returncode": completed.returncode if completed else None,
+                "stdout": completed.stdout if completed else "",
+                "stderr": completed.stderr if completed else "",
+                "result_file": str(output_path),
+            },
+        )
+        evidence_files.append(log)
+        if completed and completed.returncode != 0:
+            failures.append(f"Isaac Lab rollout command exited {completed.returncode}")
+        elif completed:
+            try:
+                payload = json.loads(output_path.read_text()) if output_path.exists() else json.loads(completed.stdout)
+                source = "rollout_command"
+            except Exception as exc:
+                failures.append(f"Isaac Lab rollout result could not be parsed: {exc}")
+
+    if payload is None:
+        if failures:
+            status = "evidence_missing" if required else "not_applicable"
+            evidence = _write_json(
+                skill_out / "isaaclab_rollout_regression.json",
+                {"status": status, "source": source, "failures": failures, "release_profile": release_profile(ctx.config)},
+            )
+            return SkillResult(
+                skill_id=manifest.skill_id,
+                status=status,
+                quality_score=0.0,
+                confidence=0.0,
+                blocking_failures=failures if required else [],
+                warnings=[] if required else failures,
+                evidence_files=[*evidence_files, evidence],
+                metrics={"isaaclab_rollout_ran": False, "source": source},
+            )
+        if required and not waiver["allowed"]:
+            failures.append("release-candidate profile requires true Isaac Lab rollout regression evidence")
+            status = "evidence_missing"
+        else:
+            status = "not_applicable"
+            if waiver["allowed"]:
+                warnings.append(f"Isaac Lab rollout requirement waived: {waiver['reason']}")
+            else:
+                warnings.append("Isaac Lab rollout regression not configured; smoke profile treats this as not applicable")
+        evidence = _write_json(
+            skill_out / "isaaclab_rollout_regression.json",
+            {"status": status, "source": source, "warnings": warnings, "failures": failures, "release_profile": release_profile(ctx.config)},
+        )
+        return SkillResult(
+            skill_id=manifest.skill_id,
+            status=status,
+            quality_score=0.0,
+            confidence=1.0 if status == "not_applicable" else 0.0,
+            blocking_failures=failures,
+            warnings=warnings,
+            evidence_files=[*evidence_files, evidence],
+            metrics={"isaaclab_rollout_ran": False, "source": source},
+        )
+
+    metrics = dict(payload.get("metrics", payload))
+    episodes = int(metrics.get("episodes", metrics.get("num_episodes", metrics.get("rollout_episodes", 0))) or 0)
+    success_rate = _optional_metric(metrics, "success_rate")
+    peak_force = _optional_metric(metrics, "peak_force_n")
+    pose_error = _optional_metric(metrics, "pose_error_p95_m")
+    min_episodes = int(ctx.config.isaac_lab.get("rollout_min_episodes", 20))
+    success_floor = float(ctx.config.isaac_lab.get("rollout_success_rate_floor", 0.7))
+    if episodes < min_episodes:
+        failures.append(f"Isaac Lab rollout episodes {episodes} below required {min_episodes}")
+    if success_rate is None:
+        failures.append("Isaac Lab rollout metrics must include success_rate")
+    elif success_rate < success_floor:
+        failures.append(f"Isaac Lab rollout success_rate {success_rate:.3f} below floor {success_floor:.3f}")
+    if peak_force is not None and peak_force > float(ctx.config.safety.get("max_contact_force_n", 80.0)):
+        failures.append("Isaac Lab rollout peak_force_n exceeds configured safety limit")
+    if pose_error is not None and pose_error > float(ctx.config.perception.get("pose_error_gate_m", 0.01)):
+        failures.append("Isaac Lab rollout pose_error_p95_m exceeds configured pose gate")
+
+    evidence = _write_json(
+        skill_out / "isaaclab_rollout_regression.json",
+        {"status": "fail" if failures else "pass", "source": source, "metrics": metrics, "payload": payload},
+    )
+    confidence = min(1.0, episodes / max(float(min_episodes), 1.0))
+    quality = confidence if not failures else min(0.4, confidence)
+    return SkillResult(
+        skill_id=manifest.skill_id,
+        status="fail" if failures else "pass",
+        quality_score=quality,
+        confidence=confidence,
+        blocking_failures=failures,
+        warnings=warnings,
+        evidence_files=[*evidence_files, evidence],
+        metrics={**metrics, "isaaclab_rollout_ran": True, "source": source},
+    )
+
+
 def _impl_release_candidate_gate(
     manifest: SkillManifest,
     ctx: HarnessContext,
@@ -1151,16 +1379,73 @@ def _impl_release_candidate_gate(
     previous: dict[str, SkillResult],
 ) -> SkillResult:
     failures = []
+    requirement_checks = {
+        "release_profile": release_profile(ctx.config),
+        "physics_sysid": "not_required",
+        "heldout_session": "not_required",
+        "isaaclab_rollout": "not_required",
+        "policy_artifacts": "not_required",
+    }
     for skill_id, result in previous.items():
         if skill_id == manifest.skill_id:
             continue
-        if result.release_blocking and result.status == "fail":
+        if result.release_blocking and result.status in BLOCKING_SKILL_STATUSES:
             failures.append(f"{skill_id} failed: {result.blocking_failures}")
+
+    if release_requires(ctx.config, "require_physics_sysid_for_human_review"):
+        newton = previous.get("newton_sysid")
+        pace = previous.get("pace_sysid")
+        physics_passed = bool((newton and newton.status == "pass") or (pace and pace.status == "pass"))
+        waiver = release_waiver(ctx.config, "allow_sysid_waiver", "sysid_waiver_reason")
+        if physics_passed:
+            requirement_checks["physics_sysid"] = "pass"
+        elif waiver["allowed"]:
+            requirement_checks["physics_sysid"] = f"waived: {waiver['reason']}"
+        else:
+            requirement_checks["physics_sysid"] = "fail"
+            failures.append("release-candidate profile requires Newton or PACE SysID evidence, or an explicit SysID waiver")
+
+    if release_requires(ctx.config, "require_heldout_session_for_human_review"):
+        data_gate = previous.get("real_data_quality_gate")
+        metrics = data_gate.metrics if data_gate else {}
+        heldout_episodes = int(metrics.get("heldout_episodes", 0) or 0)
+        heldout_min = int(ctx.config.release.get("heldout_min_episodes", 1))
+        waiver = release_waiver(ctx.config, "allow_heldout_waiver", "heldout_waiver_reason")
+        if heldout_episodes >= heldout_min:
+            requirement_checks["heldout_session"] = "pass"
+        elif waiver["allowed"]:
+            requirement_checks["heldout_session"] = f"waived: {waiver['reason']}"
+        else:
+            requirement_checks["heldout_session"] = "fail"
+            failures.append(f"release-candidate profile requires at least {heldout_min} held-out episode(s)")
+
+    if release_requires(ctx.config, "require_isaaclab_rollout_for_human_review"):
+        rollout = previous.get("isaaclab_rollout_regression")
+        waiver = release_waiver(ctx.config, "allow_isaaclab_rollout_waiver", "isaaclab_rollout_waiver_reason")
+        if rollout and rollout.status == "pass":
+            requirement_checks["isaaclab_rollout"] = "pass"
+        elif waiver["allowed"]:
+            requirement_checks["isaaclab_rollout"] = f"waived: {waiver['reason']}"
+        else:
+            requirement_checks["isaaclab_rollout"] = "fail"
+            failures.append("release-candidate profile requires true Isaac Lab rollout regression evidence")
+
+    if release_requires(ctx.config, "require_user_policy_artifacts_for_human_review"):
+        policy = previous.get("policy_artifact_audit")
+        using_sample = bool(policy and policy.metrics.get("using_sample_artifacts", False))
+        if policy and policy.status == "pass" and not using_sample:
+            requirement_checks["policy_artifacts"] = "pass"
+        elif bool(ctx.config.policy.get("allow_policy_artifact_waiver", False)) and str(ctx.config.policy.get("policy_artifact_waiver_reason", "")).strip():
+            requirement_checks["policy_artifacts"] = f"waived: {ctx.config.policy['policy_artifact_waiver_reason']}"
+        else:
+            requirement_checks["policy_artifacts"] = "fail"
+            failures.append("release-candidate profile requires user-provided policy artifacts")
     evidence = _write_json(
         skill_out / "release_gate_review.json",
         {
             "previous_skills": {skill_id: result.to_dict() for skill_id, result in previous.items()},
             "blocking_failures": failures,
+            "requirement_checks": requirement_checks,
             "safe_to_autorun_robot": False,
         },
     )
@@ -1220,6 +1505,7 @@ IMPLEMENTATIONS: dict[str, Callable[[SkillManifest, HarnessContext, Path, dict[s
     "action_scale_sweep": _impl_action_scale_sweep,
     "autoresearch_planner": _impl_autoresearch_planner,
     "sim_eval_regression": _impl_sim_eval_regression,
+    "isaaclab_rollout_regression": _impl_isaaclab_rollout_regression,
     "release_candidate_gate": _impl_release_candidate_gate,
     "real_robot_gate": _impl_real_robot_gate,
 }

@@ -18,6 +18,26 @@ whether each result is good enough to release.
 
 Real robot motion is never automatic. It remains human-gated.
 
+The repo now separates **offline validation** from **human hardware readiness**.
+A smoke run can validate that the framework and data contracts execute. A
+`release_candidate` run must provide stronger evidence: Newton or PACE physics
+SysID, held-out real data, user-provided policy artifacts, and true Isaac Lab
+rollout regression, unless an explicit waiver is recorded in config.
+
+Skill statuses are intentionally explicit:
+
+| Status | Meaning |
+| --- | --- |
+| `pass` | Validator ran and met its gate |
+| `fail` | Validator ran and found a blocking failure |
+| `evidence_missing` | Required or high-value evidence was not produced |
+| `not_applicable` | Skill is not required for the current release profile |
+| `not_approved` | Hardware-facing action has not received human approval |
+| `skip` | Legacy/external skill skipped intentionally |
+
+Skipped hardware and missing Newton/PACE evidence no longer get treated as
+clean `pass` results.
+
 ## Skills And Evaluator At A Glance
 
 This repo is organized around atomic skills. An atomic skill is one small,
@@ -136,6 +156,41 @@ outputs/<run>/skills/<skill_id>/
 
 The rule is simple: if the LLM cannot point to a skill result, metric,
 scoreboard entry, critic finding, or release decision, it is only a suggestion.
+
+## Release Profiles
+
+Default config uses `release.profile="smoke"` so a new user can validate the
+portable pipeline without Isaac Lab, Newton, PACE, or hardware installed. Smoke
+mode still records missing evidence as `evidence_missing` or `not_applicable`;
+it just does not block the framework smoke run.
+Smoke outputs use `review_scope="smoke_offline_review"` and
+`human_review_readiness="smoke_review_only"` so they cannot be mistaken for
+release-candidate readiness.
+
+For a real release-candidate review, set:
+
+```json
+{
+  "release": {
+    "profile": "release_candidate"
+  },
+  "policy": {
+    "artifact_dir": "/path/to/user/policy_bundle"
+  },
+  "isaac_lab": {
+    "rollout_metrics_path": "/path/to/isaaclab_rollout_metrics.json"
+  }
+}
+```
+
+In `release_candidate` mode, the release gate requires:
+
+- Newton or PACE SysID evidence, or `allow_sysid_waiver=true` with a reason
+- at least the configured held-out episode count, or `allow_heldout_waiver=true`
+  with a reason
+- user policy artifacts, not the sample fixture bundle
+- true Isaac Lab rollout metrics, or `allow_isaaclab_rollout_waiver=true` with
+  a reason
 
 ## LLM Orchestrator Runtime
 
@@ -343,7 +398,7 @@ This is what makes the architecture portable: users can swap skill
 implementations while keeping the same validation, critic, and release policy.
 
 If a custom skill can command hardware, mark `"real_robot": true`. The default
-harness skips real-robot skills unless `--include-real` is explicitly passed
+harness marks real-robot skills `not_approved` unless `--include-real` is explicitly passed
 after human approval.
 
 ## Current UR10e Example
@@ -389,6 +444,7 @@ skills/                         Atomic skill contracts
   action_scale_sweep/skill.json
   autoresearch_planner/skill.json
   sim_eval_regression/skill.json
+  isaaclab_rollout_regression/skill.json
   release_candidate_gate/skill.json
   real_robot_gate/skill.json
 
@@ -407,6 +463,7 @@ agentic_sim2real/
   skill_harness.py              Skill runner, validators, scoreboard, release gate
   evaluation_loop.py            LLM/Agent/Evaluator/Critic/Release/Human trace
   autoresearch.py               Experiment planner
+  release_policy.py             Smoke vs release-candidate evidence policy
   sysid.py                      Sim-real gap and SysID recommendations
   metrics.py                    Delay, stiction, pose, contact metrics
   cli.py                        Command-line entrypoint
@@ -449,8 +506,9 @@ release gate decides whether the whole chain is good enough for human review.
 | `action_scale_sweep` | `sysid_agent` | Propose safe action-scale candidates | Yes |
 | `autoresearch_planner` | `autoresearch_agent` | Generate and rank experiments | Yes |
 | `sim_eval_regression` | `critic_agent` | Compare candidate vs baseline | Yes |
+| `isaaclab_rollout_regression` | `critic_agent` | Run or consume true Isaac Lab rollout metrics before release-candidate promotion | Yes |
 | `release_candidate_gate` | `safety_agent` | Aggregate evidence and block weak releases | Yes |
-| `real_robot_gate` | `safety_agent` | Require human approval before hardware command | Yes, skipped by default |
+| `real_robot_gate` | `safety_agent` | Require human approval before hardware command | Yes, `not_approved` by default |
 
 Each skill writes:
 
@@ -752,8 +810,10 @@ by `es-rl/IsaacLab-Newton/scripts/sysid/run_sysid.py`:
 
 If `newton_command` is also configured, it overrides the built-in bridge. That
 custom command receives canonical aligned records and writes JSON evidence. If
-Newton is not enabled, `newton_sysid` skips and the local SysID skill remains the
-active fallback.
+Newton is not enabled, `newton_sysid` records `evidence_missing` and the local
+SysID skill remains the active fallback. In `release_candidate` mode, missing
+Newton/PACE evidence blocks promotion unless an explicit SysID waiver is
+configured.
 
 The bridge avoids UR-only assumptions: commanded/measured joint vectors are
 portable fields, joint names and Newton joint types come from config, and
@@ -866,8 +926,8 @@ outputs/harness_demo/
   skills/<skill_id>/result.json
 ```
 
-The default harness skips `real_robot_gate`, because hardware requires human
-approval.
+The default harness marks `real_robot_gate` as `not_approved`, because hardware
+requires human approval.
 
 ### 5. Run the LLM-orchestrated loop
 
@@ -1015,9 +1075,10 @@ env.yaml
 checkpoint metadata or pointer to model checkpoint
 ```
 
-The harness currently uses `golden/sample_inputs/policy_artifacts/` for offline
-validation. For a real release, point the policy audit skill to your real
-artifact bundle or replace the golden sample with your release candidate.
+The smoke profile uses `golden/sample_inputs/policy_artifacts/` for offline
+validation. For a real release, set `policy.artifact_dir` to your real artifact
+bundle. In `release_candidate` mode, sample artifacts block promotion unless an
+explicit waiver is recorded.
 
 ## Step By Step: Real Data And SysID
 
@@ -1089,11 +1150,11 @@ The release gate passes only when these are true:
 - every release-blocking offline skill passes
 - real-data quality gate passes before SysID
 - pose p95 error is under 1 cm
-- SysID evidence exists
-- Newton SysID either passes, is skipped as optional, or is explicitly required by config
+- local SysID evidence exists
+- release-candidate mode has Newton or PACE SysID evidence, or an explicit waiver
 - DR updates stay bounded
 - action-scale candidate stays within contact-force limits
-- sim regression evidence is present
+- sim regression and true Isaac Lab rollout evidence are present when required
 - `safe_to_autorun_robot` is false
 - human approval is still required
 

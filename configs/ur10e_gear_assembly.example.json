@@ -7,7 +7,12 @@
     "visualize_num_envs": 4,
     "video_length": 800,
     "video_interval": 5000,
-    "observations": ["joint_pos", "joint_vel", "gear_shaft_pos", "gear_shaft_quat"]
+    "observations": ["joint_pos", "joint_vel", "gear_shaft_pos", "gear_shaft_quat"],
+    "rollout_command": [],
+    "rollout_metrics_path": "",
+    "rollout_timeout_s": 1800,
+    "rollout_min_episodes": 20,
+    "rollout_success_rate_floor": 0.7
   },
   "robot": {
     "arm": "ur10e",
@@ -38,6 +43,26 @@
     "min_real_episodes_for_gate": 3,
     "max_recommended_delay_steps": 8,
     "precision_task": true
+  },
+  "policy": {
+    "artifact_dir": "golden/sample_inputs/policy_artifacts",
+    "allow_sample_artifacts_for_smoke": true,
+    "allow_policy_artifact_waiver": false,
+    "policy_artifact_waiver_reason": ""
+  },
+  "release": {
+    "profile": "smoke",
+    "require_physics_sysid_for_human_review": null,
+    "allow_sysid_waiver": false,
+    "sysid_waiver_reason": "",
+    "require_heldout_session_for_human_review": null,
+    "heldout_min_episodes": 1,
+    "allow_heldout_waiver": false,
+    "heldout_waiver_reason": "",
+    "require_isaaclab_rollout_for_human_review": null,
+    "allow_isaaclab_rollout_waiver": false,
+    "isaaclab_rollout_waiver_reason": "",
+    "require_user_policy_artifacts_for_human_review": null
   },
   "llm_orchestrator": {
     "provider": "scripted",

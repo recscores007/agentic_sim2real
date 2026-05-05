@@ -30,6 +30,7 @@ GAP_HINT_PRIORITY: dict[str, list[str]] = {
         "domain_randomization_update",
         "autoresearch_planner",
         "sim_eval_regression",
+        "isaaclab_rollout_regression",
     ],
     "actuator": [
         "env_preflight",
@@ -42,6 +43,7 @@ GAP_HINT_PRIORITY: dict[str, list[str]] = {
         "domain_randomization_update",
         "autoresearch_planner",
         "sim_eval_regression",
+        "isaaclab_rollout_regression",
     ],
     "contact": [
         "env_preflight",
@@ -51,6 +53,7 @@ GAP_HINT_PRIORITY: dict[str, list[str]] = {
         "action_scale_sweep",
         "domain_randomization_update",
         "sim_eval_regression",
+        "isaaclab_rollout_regression",
     ],
     "latency": [
         "env_preflight",
@@ -61,6 +64,7 @@ GAP_HINT_PRIORITY: dict[str, list[str]] = {
         "pace_sysid",
         "domain_randomization_update",
         "sim_eval_regression",
+        "isaaclab_rollout_regression",
     ],
     "domain_randomization": [
         "env_preflight",
@@ -73,6 +77,7 @@ GAP_HINT_PRIORITY: dict[str, list[str]] = {
         "domain_randomization_update",
         "autoresearch_planner",
         "sim_eval_regression",
+        "isaaclab_rollout_regression",
     ],
     "deployment": [
         "env_preflight",
@@ -80,6 +85,7 @@ GAP_HINT_PRIORITY: dict[str, list[str]] = {
         "isaaclab_task_check",
         "policy_artifact_audit",
         "sim_eval_regression",
+        "isaaclab_rollout_regression",
     ],
     "policy": [
         "env_preflight",
@@ -87,6 +93,7 @@ GAP_HINT_PRIORITY: dict[str, list[str]] = {
         "isaaclab_task_check",
         "policy_artifact_audit",
         "sim_eval_regression",
+        "isaaclab_rollout_regression",
         "autoresearch_planner",
     ],
 }

@@ -95,10 +95,10 @@ def run_newton_bridge(
         )
     except Exception as exc:
         payload = _status_payload(
-            status="fail" if required else "skip",
+            status="fail" if required else "evidence_missing",
             reason=f"Newton input preparation failed: {exc}",
             confidence=0.0 if required else 1.0,
-            quality_score=0.0 if required else 1.0,
+            quality_score=0.0,
             metrics={"newton_input_prepared": False, "newton_available": False},
             warnings=[] if required else [str(exc)],
             blocking_failures=[str(exc)] if required else [],
@@ -109,10 +109,10 @@ def run_newton_bridge(
     prepare_only = force_prepare_only or run_mode in {"prepare_only", "convert_only", "dry_run"}
     if prepare_only:
         payload = _status_payload(
-            status="skip",
+            status="not_applicable",
             reason="Newton input prepared; run mode is prepare_only.",
             confidence=1.0,
-            quality_score=1.0,
+            quality_score=0.0,
             metrics={
                 **prep["metrics"],
                 "newton_input_prepared": True,
@@ -127,10 +127,10 @@ def run_newton_bridge(
     newton_root = _resolve_newton_root(input_payload, sysid_cfg)
     if not newton_root:
         payload = _status_payload(
-            status="fail" if required else "skip",
+            status="fail" if required else "evidence_missing",
             reason="IsaacLab-Newton root is not configured. Set sysid.newton_root or ISAACLAB_NEWTON_ROOT.",
             confidence=0.0 if required else 1.0,
-            quality_score=0.0 if required else 1.0,
+            quality_score=0.0,
             metrics={**prep["metrics"], "newton_input_prepared": True, "newton_available": False},
             warnings=[] if required else ["Newton input was prepared, but IsaacLab-Newton root is missing."],
             blocking_failures=["IsaacLab-Newton root is missing"] if required else [],
@@ -141,10 +141,10 @@ def run_newton_bridge(
     script_path = newton_root / "scripts" / "sysid" / "run_sysid.py"
     if not script_path.exists():
         payload = _status_payload(
-            status="fail" if required else "skip",
+            status="fail" if required else "evidence_missing",
             reason=f"IsaacLab-Newton SysID entrypoint not found: {script_path}",
             confidence=0.0 if required else 1.0,
-            quality_score=0.0 if required else 1.0,
+            quality_score=0.0,
             metrics={**prep["metrics"], "newton_input_prepared": True, "newton_available": False},
             warnings=[] if required else [f"Missing Newton entrypoint: {script_path}"],
             blocking_failures=[f"Missing Newton entrypoint: {script_path}"] if required else [],
@@ -161,10 +161,10 @@ def run_newton_bridge(
         command = _newton_command(script_path, newton_root, bridge_input_dir, fit_output_dir, config)
     except ValueError as exc:
         payload = _status_payload(
-            status="fail" if required else "skip",
+            status="fail" if required else "evidence_missing",
             reason=str(exc),
             confidence=0.0 if required else 1.0,
-            quality_score=0.0 if required else 1.0,
+            quality_score=0.0,
             metrics={**prep["metrics"], "newton_input_prepared": True, "newton_available": True, "newton_ran": False},
             warnings=[] if required else [str(exc)],
             blocking_failures=[str(exc)] if required else [],
@@ -187,10 +187,10 @@ def run_newton_bridge(
     except (OSError, subprocess.TimeoutExpired) as exc:
         command_log.write_text(json.dumps({"command": command, "error": str(exc)}, indent=2, sort_keys=True) + "\n")
         payload = _status_payload(
-            status="fail" if required else "skip",
+            status="fail" if required else "evidence_missing",
             reason=f"IsaacLab-Newton run could not complete: {exc}",
             confidence=0.0 if required else 1.0,
-            quality_score=0.0 if required else 1.0,
+            quality_score=0.0,
             metrics={**prep["metrics"], "newton_input_prepared": True, "newton_available": False},
             warnings=[] if required else [str(exc)],
             blocking_failures=[str(exc)] if required else [],
@@ -214,10 +214,10 @@ def run_newton_bridge(
     )
     if completed.returncode != 0:
         payload = _status_payload(
-            status="fail" if required else "skip",
+            status="fail" if required else "evidence_missing",
             reason=f"IsaacLab-Newton exited {completed.returncode}",
             confidence=0.0 if required else 1.0,
-            quality_score=0.0 if required else 1.0,
+            quality_score=0.0,
             metrics={**prep["metrics"], "newton_input_prepared": True, "newton_available": False},
             warnings=[] if required else [f"Newton exited {completed.returncode}; see command log."],
             blocking_failures=[f"Newton exited {completed.returncode}"] if required else [],
@@ -229,10 +229,10 @@ def run_newton_bridge(
     best_params = parsed.get("best_params", {})
     if not best_params:
         payload = _status_payload(
-            status="fail" if required else "skip",
+            status="fail" if required else "evidence_missing",
             reason=f"IsaacLab-Newton did not write parseable best_params.yaml in {fit_output_dir}",
             confidence=0.0 if required else 1.0,
-            quality_score=0.0 if required else 1.0,
+            quality_score=0.0,
             metrics={**prep["metrics"], "newton_input_prepared": True, "newton_available": True, "newton_ran": True},
             warnings=[] if required else ["Newton ran but produced no parseable fitted parameters."],
             blocking_failures=["Newton produced no parseable fitted parameters"] if required else [],

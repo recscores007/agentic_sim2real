@@ -124,4 +124,6 @@ IsaacLab-Newton is represented by the portable `newton_sysid` skill. Configure
 `config.sysid.newton_command` to run a Newton fitting entrypoint. The skill
 receives canonical aligned records, writes fitted parameters and residual
 metrics, and feeds the same evaluator and release gate. It is optional unless
-`config.sysid.require_newton=true`.
+`release.profile="release_candidate"` or `config.sysid.require_newton=true`.
+When Newton/PACE evidence is absent, the harness records `evidence_missing`
+rather than a clean pass.

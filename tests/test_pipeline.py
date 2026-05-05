@@ -74,6 +74,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("real_data_quality_gate", result["skills"])
         self.assertIn("newton_sysid", result["skills"])
         self.assertIn("pace_sysid", result["skills"])
+        self.assertIn("isaaclab_rollout_regression", result["skills"])
 
     def test_harness_writes_scoreboard(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -85,8 +86,12 @@ class PipelineTests(unittest.TestCase):
             )
             self.assertEqual(scoreboard["status"], "pass")
             self.assertIn("real_data_quality_gate", scoreboard["skills"])
-            self.assertEqual(scoreboard["skills"]["newton_sysid"]["status"], "skip")
-            self.assertEqual(scoreboard["skills"]["pace_sysid"]["status"], "skip")
+            self.assertEqual(scoreboard["skills"]["newton_sysid"]["status"], "evidence_missing")
+            self.assertEqual(scoreboard["skills"]["pace_sysid"]["status"], "evidence_missing")
+            self.assertEqual(scoreboard["skills"]["isaaclab_rollout_regression"]["status"], "not_applicable")
+            self.assertEqual(scoreboard["skills"]["real_robot_gate"]["status"], "not_approved")
+            self.assertEqual(scoreboard["human_review_readiness"], "smoke_review_only")
+            self.assertFalse(scoreboard["release_candidate_ready"])
             self.assertIn("release_candidate_gate", scoreboard["skills"])
             self.assertTrue((Path(tmp) / "scoreboard.json").exists())
 
@@ -190,6 +195,9 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("llm_orchestrator", trace)
             self.assertEqual(trace["llm_orchestrator"]["provider"], "scripted")
             self.assertFalse(trace["release_gate_decides"]["safe_to_autorun_robot"])
+            self.assertEqual(trace["offline_validation_status"], "pass")
+            self.assertEqual(trace["release_gate_decides"]["human_review_readiness"], "smoke_review_only")
+            self.assertFalse(trace["release_gate_decides"]["release_candidate_ready"])
             self.assertTrue((Path(tmp) / "evaluation_trace.md").exists())
 
     def test_llm_orchestrator_runs_skills_and_writes_journal(self) -> None:
@@ -204,6 +212,8 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(summary["provider"], "scripted")
             self.assertIn("release_candidate_gate", summary["completed_skill_ids"])
             self.assertIn("real_robot_gate", summary["completed_skill_ids"])
+            self.assertIn("isaaclab_rollout_regression", summary["completed_skill_ids"])
+            self.assertEqual(summary["scoreboard"]["skills"]["real_robot_gate"]["status"], "not_approved")
             journal = Path(summary["journal"])
             self.assertTrue(journal.exists())
             lines = [json.loads(line) for line in journal.read_text().splitlines()]
@@ -417,6 +427,65 @@ class PipelineTests(unittest.TestCase):
             result = scoreboard["skills"]["pace_sysid"]
             self.assertEqual(result["status"], "pass")
             self.assertTrue(result["metrics"]["pace_fit_used"])
+
+    def test_release_candidate_profile_blocks_missing_strong_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config = json.loads((ROOT / "configs" / "ur10e_gear_assembly.example.json").read_text())
+            config["release"]["profile"] = "release_candidate"
+            config_path = tmp_path / "config.json"
+            config_path.write_text(json.dumps(config) + "\n")
+            trace = run_evaluation_loop(
+                root=ROOT,
+                config_path=config_path,
+                dataset_path=ROOT / "embodiments" / "manipulator" / "ur10e_gear_assembly" / "real_data" / "example_session",
+                out_dir=tmp_path / "out",
+            )
+            self.assertEqual(trace["release_gate_decides"]["status"], "blocked")
+            joined = json.dumps(trace["release_gate_decides"]["blocking_failures"])
+            self.assertIn("Newton or PACE SysID", joined)
+            self.assertIn("held-out", joined)
+            self.assertIn("Isaac Lab rollout", joined)
+
+    def test_release_candidate_profile_accepts_explicit_waivers_and_user_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            artifact_dir = tmp_path / "policy"
+            artifact_dir.mkdir()
+            for name in ["agent.yaml", "env.yaml", "checkpoint.meta.json"]:
+                (artifact_dir / name).write_text("{}\n")
+            rollout_metrics = tmp_path / "rollout_metrics.json"
+            rollout_metrics.write_text(
+                json.dumps(
+                    {
+                        "metrics": {
+                            "episodes": 20,
+                            "success_rate": 0.8,
+                            "peak_force_n": 42.0,
+                            "pose_error_p95_m": 0.004,
+                        }
+                    }
+                )
+                + "\n"
+            )
+            config = json.loads((ROOT / "configs" / "ur10e_gear_assembly.example.json").read_text())
+            config["release"]["profile"] = "release_candidate"
+            config["release"]["allow_sysid_waiver"] = True
+            config["release"]["sysid_waiver_reason"] = "bench has validated local SysID for this smoke fixture"
+            config["release"]["allow_heldout_waiver"] = True
+            config["release"]["heldout_waiver_reason"] = "sample fixture has no held-out split"
+            config["policy"]["artifact_dir"] = str(artifact_dir)
+            config["isaac_lab"]["rollout_metrics_path"] = str(rollout_metrics)
+            config_path = tmp_path / "config.json"
+            config_path.write_text(json.dumps(config) + "\n")
+            trace = run_evaluation_loop(
+                root=ROOT,
+                config_path=config_path,
+                dataset_path=ROOT / "embodiments" / "manipulator" / "ur10e_gear_assembly" / "real_data" / "example_session",
+                out_dir=tmp_path / "out",
+            )
+            self.assertEqual(trace["release_gate_decides"]["status"], "promote_to_human_review")
+            self.assertEqual(trace["human_review_readiness"], "ready")
 
     def test_prepare_generic_object_pose_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

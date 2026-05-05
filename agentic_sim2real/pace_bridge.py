@@ -27,10 +27,10 @@ def run_pace_bridge(
         prep = prepare_pace_input(input_payload["dataset"], config, work)
     except Exception as exc:
         payload = _payload(
-            status="fail" if required else "skip",
+            status="fail" if required else "evidence_missing",
             reason=f"PACE input preparation failed: {exc}",
             confidence=0.0 if required else 1.0,
-            quality_score=0.0 if required else 1.0,
+            quality_score=0.0,
             metrics={"pace_input_prepared": False, "pace_available": False},
             warnings=[] if required else [str(exc)],
             blocking_failures=[str(exc)] if required else [],
@@ -40,10 +40,10 @@ def run_pace_bridge(
     run_mode = str(sysid_cfg.get("pace_run_mode", "run")).lower()
     if force_prepare_only or run_mode in {"prepare_only", "convert_only", "dry_run"}:
         payload = _payload(
-            status="skip",
+            status="not_applicable",
             reason="PACE input prepared; run mode is prepare_only.",
             confidence=1.0,
-            quality_score=1.0,
+            quality_score=0.0,
             metrics={**prep["metrics"], "pace_input_prepared": True, "pace_ran": False, "pace_run_mode": run_mode},
             warnings=list(prep["warnings"]),
             evidence_files=list(prep["evidence_files"]),
@@ -55,10 +55,10 @@ def run_pace_bridge(
     if not command:
         if not pace_root:
             payload = _payload(
-                status="fail" if required else "skip",
+                status="fail" if required else "evidence_missing",
                 reason="PACE root is not configured. Set sysid.pace_root or PACE_SIM2REAL_ROOT.",
                 confidence=0.0 if required else 1.0,
-                quality_score=0.0 if required else 1.0,
+                quality_score=0.0,
                 metrics={**prep["metrics"], "pace_input_prepared": True, "pace_available": False},
                 warnings=[] if required else ["PACE input was prepared, but pace-sim2real root is missing."],
                 blocking_failures=["PACE root is missing"] if required else [],
@@ -69,10 +69,10 @@ def run_pace_bridge(
             command = _default_pace_command(pace_root, sysid_cfg)
         except ValueError as exc:
             payload = _payload(
-                status="fail" if required else "skip",
+                status="fail" if required else "evidence_missing",
                 reason=str(exc),
                 confidence=0.0 if required else 1.0,
-                quality_score=0.0 if required else 1.0,
+                quality_score=0.0,
                 metrics={**prep["metrics"], "pace_input_prepared": True, "pace_available": bool(pace_root)},
                 warnings=[] if required else [str(exc)],
                 blocking_failures=[str(exc)] if required else [],
@@ -115,10 +115,10 @@ def run_pace_bridge(
     except (OSError, subprocess.TimeoutExpired) as exc:
         command_log.write_text(json.dumps({"command": command, "error": str(exc)}, indent=2, sort_keys=True) + "\n")
         payload = _payload(
-            status="fail" if required else "skip",
+            status="fail" if required else "evidence_missing",
             reason=f"PACE command could not complete: {exc}",
             confidence=0.0 if required else 1.0,
-            quality_score=0.0 if required else 1.0,
+            quality_score=0.0,
             metrics={**prep["metrics"], "pace_input_prepared": True, "pace_available": False},
             warnings=[] if required else [str(exc)],
             blocking_failures=[str(exc)] if required else [],
@@ -141,10 +141,10 @@ def run_pace_bridge(
     )
     if completed.returncode != 0:
         payload = _payload(
-            status="fail" if required else "skip",
+            status="fail" if required else "evidence_missing",
             reason=f"PACE command exited {completed.returncode}",
             confidence=0.0 if required else 1.0,
-            quality_score=0.0 if required else 1.0,
+            quality_score=0.0,
             metrics={**prep["metrics"], "pace_input_prepared": True, "pace_available": False, "pace_ran": True},
             warnings=[] if required else [f"PACE command exited {completed.returncode}; see command log."],
             blocking_failures=[f"PACE command exited {completed.returncode}"] if required else [],

@@ -4,11 +4,12 @@
   "owner_agent": "safety_agent",
   "description": "Aggregate skill results and block promotion if any release-blocking skill failed.",
   "implementation": "release_candidate_gate",
-  "depends_on": ["policy_artifact_audit", "sim_eval_regression"],
+  "depends_on": ["policy_artifact_audit", "isaaclab_rollout_regression"],
   "inputs": ["skill_results"],
   "outputs": ["release_gate_review.json", "result.json"],
   "validators": [
-    "all release-blocking skills must pass",
+    "all required release-blocking skills must pass or have explicit waivers",
+    "release-candidate profile must enforce held-out data, physics SysID, user policy artifacts, and Isaac Lab rollout evidence",
     "safe_to_autorun_robot must always be false",
     "human approvals must be listed for hardware-facing skills"
   ],

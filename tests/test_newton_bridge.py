@@ -116,7 +116,7 @@ class NewtonBridgeTests(unittest.TestCase):
                 output_path=output,
             )
 
-            self.assertEqual(result["status"], "skip")
+            self.assertEqual(result["status"], "not_applicable")
             self.assertTrue(result["metrics"]["newton_input_prepared"])
             self.assertFalse(result["metrics"]["newton_ran"])
             self.assertTrue(output.exists())
