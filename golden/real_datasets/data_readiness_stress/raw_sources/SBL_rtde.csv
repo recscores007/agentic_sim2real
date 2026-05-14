@@ -1,7 +1,0 @@
-timestamp,q0,q1,q2,q3,q4,q5,note
-0.0,0.0,0.02,0.04,0.06,0.08,0.1,orphan_frame_source
-0.1,0.01,0.03,0.05,0.07,0.09,0.11,orphan_frame_source
-0.2,0.02,0.04,0.06,0.08,0.1,0.12,orphan_frame_source
-0.3,0.03,0.05,0.07,0.09,0.11,0.13,orphan_frame_source
-0.4,0.04,0.06,0.08,0.1,0.12,0.14,orphan_frame_source
-0.5,0.05,0.07,0.09,0.11,0.13,0.15,orphan_frame_source

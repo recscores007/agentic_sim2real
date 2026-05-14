@@ -1,4 +1,0 @@
-episode_index,success,failure_mode,notes
-0,true,none,synthetic success
-1,false,brief_jam,synthetic brief jam
-2,true,none,synthetic success

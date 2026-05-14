@@ -1,3 +1,0 @@
-episode_index,timestamp,camera_name,color_image,depth_image
-0,0.000,camera_0,camera_data/color/episode_000_t000000.png,camera_data/depth/episode_000_t000000.png
-0,0.033,camera_0,camera_data/color/episode_000_t000033.png,camera_data/depth/episode_000_t000033.png
